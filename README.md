@@ -19,6 +19,17 @@ Como alternativa, com Node.js instalado, execute `npm start` e abra http://127.0
 
 Guia oficial: [Como carregar imagens no Design Space](https://help.cricut.com/hc/en-us/articles/360009556313-How-to-upload-images-into-Design-Space).
 
+## Correções manuais, pontes, base e presets
+
+- **Preservar** abre a aba Original. Pinte sobre o detalhe branco ou colorido que deseja recuperar; o pincel restaura os pixels da imagem, inclusive branco que foi confundido com o fundo. Ajuste o diâmetro em pixels da imagem de análise. Verde marca os traços na Original; confira a arte real em Resultado. O pincel não inventa cor em pixels originalmente transparentes.
+- **Apagar** remove a área pintada do PNG e da silhueta. Vermelho marca a área na Original. O apagamento continua valendo depois da suavização, do contorno e da união automática, inclusive em furos menores que o limite interno. Um traço posterior de Preservar pode restaurar os pixels originais.
+- **Ponte** cria uma ligação reta: ajuste a largura entre **0,5 e 10 mm** e arraste de uma parte a outra, começando e terminando dentro das partes. A ligação tem preenchimento preto, recebe o contorno escolhido e mantém a largura física ao mudar a resolução. As cores das partes atravessadas permanecem. Azul marca a ponte na Original; confira a continuidade na Silhueta de corte.
+- **Desfazer / Refazer** e **Ctrl+Z / Ctrl+Shift+Z** controlam as edições manuais. **Limpar edições** também pode ser desfeito; **Esc** cancela um traço em andamento. Há até **200 traços por imagem** e **100 passos de histórico**. Carregar outra imagem reinicia os traços; trocar acabamento, tamanho ou resolução os mantém. As marcações coloridas não são exportadas.
+- **Adicionar base** cria uma base arredondada ou retangular, com largura de **10 a 250 mm**, altura de **2 a 40 mm** e cor escolhida. As medidas são do preenchimento, antes do contorno. A base se liga automaticamente à parte inferior da figura e entra na altura total do PNG: a figura diminui para caber junto dela. O PNG mantém a margem transparente e as medidas de exportação.
+- **Presets de acabamento** oferece modelos de contorno suave, preto firme e totem com base. Dê um nome e clique em **Salvar** para guardar as configurações atuais; escolha um preset e clique em **Aplicar** para reutilizá-lo. Salvar com o mesmo nome atualiza o preset. **Excluir** remove um preset pessoal. Eles incluem recorte automático, acabamento, base, altura, resolução e opção de espelho, mantendo os traços da arte atual ao aplicar. São até **30 presets**, salvos apenas neste navegador; os traços e arquivos das imagens não fazem parte deles.
+
+Pincel, pontes e base são aplicados ao resultado antes da exportação: o PNG e a cópia espelhada recebem todas as edições. Confira sempre a Silhueta de corte após editar.
+
 ## Limites e acabamento
 
 - Arquivos de até 30 MB. Imagens acima de 80 megapixels são recusadas; a análise usa até 1800 pixels no maior lado para limitar o uso de memória. O tamanho de exportação é calculado separadamente.
@@ -34,4 +45,4 @@ Guia oficial: [Como carregar imagens no Design Space](https://help.cricut.com/hc
 
 Sem dependências de produção. `processing.js` usa flood fill para remover o fundo conectado, componentes para limpar pontos, fechamento morfológico e filtros para suavizar a máscara e distância euclidiana para calcular o contorno. O processamento acontece em um Web Worker; a interface permanece disponível.
 
-`npm test` executa testes do processamento. `npm install` instala a ferramenta de teste de navegador; `npm run test:browser` verifica upload, ajustes, exportação, transparência e os metadados do PNG no Chrome local.
+`npm test` executa testes do processamento. `npm install` instala a ferramenta de teste de navegador; `npm run test:browser` verifica upload, ajustes, exportação, transparência e os metadados do PNG no Chrome local. `npm run test:editor` verifica gestos reais do pincel e das pontes, histórico, base, persistência dos presets e exportação original/espelhada com as edições.

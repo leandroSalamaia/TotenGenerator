@@ -132,9 +132,9 @@ function openingFixture(transparent = false) {
   return src;
 }
 function sourcePixel(out, x, y) {
-  const b = out.sourceBounds, w = out.width - out.margin * 2;
-  const ox = out.margin + Math.floor((x - b.x + 0.5) * w / b.width);
-  const oy = out.margin + Math.floor((y - b.y + 0.5) * out.figurePixels / b.height);
+  const b = out.sourceBounds, placement = out.placement ?? { x: out.margin, y: out.margin, width: out.width - out.margin * 2, height: out.figurePixels };
+  const ox = placement.x + Math.floor((x - b.x + 0.5) * placement.width / b.width);
+  const oy = placement.y + Math.floor((y - b.y + 0.5) * placement.height / b.height);
   return [...out.rgba.subarray((oy * out.width + ox) * 4, (oy * out.width + ox) * 4 + 4)];
 }
 test('opens large internal white regions and preserves small dots and long narrow slots', () => {
@@ -281,4 +281,74 @@ test('wide joining preserves every opaque pixel without clipping the export edge
   assert.equal(joined.width, original.width); assert.equal(joined.height, original.height);
   for (let p = 0; p < original.rgba.length; p += 4) if (original.rgba[p + 3] === 255) assert.deepEqual(joined.rgba.subarray(p, p + 4), original.rgba.subarray(p, p + 4));
   assert.equal(joined.rgba[3], 0);
+});
+
+test('preserve brush restores original white pixels removed by segmentation and internal filtering', () => {
+  const src = image(200, 240);
+  src.rect(20, 20, 160, 200, [30, 70, 120, 255]);
+  src.rect(20, 175, 160, 45, [255, 255, 255, 255]);
+  src.rect(45, 50, 45, 50, [255, 255, 255, 255]);
+  const edits = [
+    { kind: 'preserve', radius: 28, points: [{ x: 47, y: 198 }, { x: 153, y: 198 }] },
+    { kind: 'preserve', radius: 32, points: [{ x: 67, y: 75 }] }
+  ];
+  const before = src.rgba.slice();
+  const out = engine.processImage({ ...src, edits, settings: { ...config, smoothing: 3, removeInternal: true, minInternalMm: 0, joinBordersMm: 2 } });
+  assert.deepEqual(sourcePixel(out, 70, 195), [255, 255, 255, 255]);
+  assert.deepEqual(sourcePixel(out, 67, 75), [255, 255, 255, 255]);
+  assert.deepEqual(sourcePixel(out, 110, 100), [30, 70, 120, 255]);
+  assert.deepEqual(src.rgba, before);
+});
+test('eraser stays transparent after thick outlines, smoothing and automatic hole closing; later preserve wins', () => {
+  const src = image(200, 240); src.rect(20, 20, 160, 200, [30, 70, 120, 255]);
+  const stroke = { kind: 'erase', radius: 5, points: [{ x: 80, y: 80 }, { x: 120, y: 130 }] };
+  const options = { ...config, smoothing: 3, borderMm: 2, joinBordersMm: 6, removeInternal: true, minInternalMm: 20 };
+  const erased = engine.processImage({ ...src, edits: [stroke], settings: options });
+  assert.equal(sourcePixel(erased, 100, 105)[3], 0);
+  assert.deepEqual(sourcePixel(erased, 50, 70), [30, 70, 120, 255]);
+  const restored = engine.processImage({ ...src, edits: [stroke, { kind: 'preserve', radius: 8, points: [{ x: 100, y: 105 }] }], settings: options });
+  assert.deepEqual(sourcePixel(restored, 100, 105), [30, 70, 120, 255]);
+  for (let p = 3; p < erased.rgba.length; p += 4) assert.equal(erased.rgba[p], erased.silhouette[p]);
+});
+test('manual bridge connects distant parts with black backing and its physical width follows DPI', () => {
+  const src = barFixture(35), edits = [{ kind: 'bridge', widthMm: 2, points: [{ x: 65, y: 110 }, { x: 130, y: 110 }] }];
+  for (const dpi of [150, 300]) {
+    const out = engine.processImage({ ...src, edits, settings: { ...config, borderMm: 0, smoothing: 0, joinBordersMm: 0, removeInternal: true, minInternalMm: 2, dpi } });
+    assert.deepEqual(sourcePixel(out, 95, 110), [0, 0, 0, 255]);
+    assert.equal(sourcePixel(out, 95, 70)[3], 0);
+    const b = out.sourceBounds, p = out.placement, x = p.x + Math.floor((95 - b.x + 0.5) / b.width * p.width);
+    let count = 0;
+    for (let y = 0; y < out.height; y++) if (out.rgba[(y * out.width + x) * 4 + 3] >= 128) count++;
+    assert.ok(Math.abs(count / dpi * 25.4 - 2) < 0.3);
+    assert.equal(out.rgba[3], 0);
+  }
+});
+test('rounded and rectangular bases keep total height, exact physical size, connection and original artwork', () => {
+  const src = image(200, 240); src.rect(60, 20, 80, 200, [30, 70, 120, 255]);
+  for (const shape of ['rounded', 'rectangle']) for (const dpi of [150, 300]) {
+    const out = engine.processImage({ ...src, settings: { ...config, dpi, borderMm: 0, baseEnabled: true, baseWidthMm: 50, baseHeightMm: 8, baseShape: shape, baseColor: '#b04020', joinBordersMm: 0, removeInternal: true, minInternalMm: 2 } });
+    assert.equal(out.height, Math.round(4 / 2.54 * dpi));
+    assert.equal(out.base.width, Math.round(50 / 25.4 * dpi));
+    assert.equal(out.base.height, Math.round(8 / 25.4 * dpi));
+    const x = Math.floor(out.width / 2), y = out.base.y + Math.floor(out.base.height / 2), i = (y * out.width + x) * 4;
+    assert.deepEqual([...out.rgba.subarray(i, i + 4)], [176, 64, 32, 255]);
+    assert.deepEqual(sourcePixel(out, 100, 80), [30, 70, 120, 255]);
+    for (let yy = out.placement.y + 2; yy < y; yy++) assert.ok(out.rgba[(yy * out.width + x) * 4 + 3] > 0, 'base remains connected');
+    assert.equal(out.rgba[3], 0);
+    assert.equal(out.rgba[out.rgba.length - 1], 0);
+  }
+});
+test('invalid edits and base sizes fail with useful errors instead of partial exports', () => {
+  const src = snowyArtwork();
+  assert.throws(() => engine.processImage({ ...src, edits: [{ kind: 'erase', radius: 5, points: [{ x: -3, y: 80 }] }], settings: config }), /dentro da imagem/);
+  assert.throws(() => engine.processImage({ ...src, edits: [{ kind: 'bridge', widthMm: 0, points: [{ x: 50, y: 80 }] }], settings: config }), /Tamanho/);
+  assert.throws(() => engine.processImage({ ...src, edits: [{ kind: 'bridge', widthMm: 0.25, points: [{ x: 50, y: 80 }] }], settings: config }), /Tamanho/);
+  assert.throws(() => engine.processImage({ ...src, settings: { ...config, baseEnabled: true, baseWidthMm: 400 } }), /base precisa/);
+});
+test('preserve brush restores artwork without inventing pixels in the transparent source background', () => {
+  const src = snowyArtwork(), options = { ...config, borderMm: 0, joinBordersMm: 0, smoothing: 0, removeInternal: true, minInternalMm: 2 };
+  const plain = engine.processImage({ ...src, settings: options });
+  const painted = engine.processImage({ ...src, settings: options, edits: [{ kind: 'preserve', radius: 20, points: [{ x: 20, y: 130 }] }] });
+  assert.deepEqual(painted.sourceBounds, plain.sourceBounds);
+  assert.deepEqual(painted.rgba, plain.rgba);
 });

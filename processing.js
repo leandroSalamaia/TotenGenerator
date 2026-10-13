@@ -154,7 +154,7 @@
     blurred = boxBlur(blurred, width, height, Math.max(1, Math.round(radius * 0.5)));
     return Uint8Array.from(blurred, value => value >= 0.5 ? 1 : 0);
   }
-  function resizeArtwork(rgba, mask, width, height, bounds, outputWidth, outputHeight, margin, figureWidth, figureHeight) {
+  function resizeArtwork(rgba, mask, width, height, bounds, outputWidth, outputHeight, margin, figureWidth, figureHeight, offsetX = margin) {
     const pixels = new Uint8ClampedArray(outputWidth * outputHeight * 4), resizedMask = new Uint8Array(outputWidth * outputHeight);
     for (let y = 0; y < figureHeight; y++) for (let x = 0; x < figureWidth; x++) {
       const sx = Math.max(bounds.x, Math.min(bounds.x + bounds.width - 1, bounds.x + (x + 0.5) * bounds.width / figureWidth - 0.5));
@@ -167,7 +167,7 @@
         const i = indices[k], p = i * 4, weight = weights[k], a = mask[i] * rgba[p + 3] / 255 * weight;
         coverage += mask[i] * weight; alpha += a; r += rgba[p] * a; g += rgba[p + 1] * a; b += rgba[p + 2] * a;
       }
-      const i = (y + margin) * outputWidth + x + margin, p = i * 4;
+      const i = (y + margin) * outputWidth + x + offsetX, p = i * 4;
       resizedMask[i] = coverage >= 0.5 ? 1 : 0;
       if (alpha > 0) { pixels[p] = r / alpha; pixels[p + 1] = g / alpha; pixels[p + 2] = b / alpha; pixels[p + 3] = alpha * 255; }
     }
@@ -269,20 +269,103 @@
     }
     return { output, silhouette };
   }
+  // Rasterize continuous circular strokes rather than isolated mouse samples.
+  // The last stroke wins where tools overlap; coordinates remain in source pixels.
+  function rasterEdits(edits, width, height, transform = null, dpi = 150) {
+    const values = new Int8Array(width * height), coverage = new Float32Array(width * height);
+    for (const stroke of edits) {
+      const value = stroke.kind === 'preserve' ? 1 : stroke.kind === 'erase' ? -1 : 2;
+      if (!transform && value === 2) continue;
+      const points = stroke.points.map(point => transform ? { x: transform.x + (point.x - transform.bounds.x + 0.5) * transform.scaleX - 0.5, y: transform.y + (point.y - transform.bounds.y + 0.5) * transform.scaleY - 0.5 } : point);
+      const radius = value === 2 ? stroke.widthMm / 25.4 * dpi / 2 : stroke.radius * (transform ? Math.min(transform.scaleX, transform.scaleY) : 1);
+      for (let k = 0; k < points.length; k++) {
+        const a = points[Math.max(0, k - 1)], b = points[k], dx = b.x - a.x, dy = b.y - a.y, squared = dx * dx + dy * dy;
+        const x0 = Math.max(0, Math.floor(Math.min(a.x, b.x) - radius - 1)), x1 = Math.min(width - 1, Math.ceil(Math.max(a.x, b.x) + radius + 1));
+        const y0 = Math.max(0, Math.floor(Math.min(a.y, b.y) - radius - 1)), y1 = Math.min(height - 1, Math.ceil(Math.max(a.y, b.y) + radius + 1));
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+          const t = squared ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / squared)) : 0;
+          const alpha = Math.max(0, Math.min(1, radius + 0.5 - Math.hypot(x - a.x - t * dx, y - a.y - t * dy)));
+          if (!alpha) continue;
+          const i = y * width + x;
+          coverage[i] = values[i] === value ? Math.max(coverage[i], alpha) : alpha;
+          values[i] = value;
+        }
+      }
+    }
+    return { values, coverage };
+  }
+  function validateEdits(edits, width, height) {
+    if (!Array.isArray(edits) || edits.length > 200) throw new Error('Use no máximo 200 traços por imagem.');
+    for (const stroke of edits) {
+      if (!['preserve', 'erase', 'bridge'].includes(stroke.kind) || !Array.isArray(stroke.points) || !stroke.points.length || stroke.points.length > 4096) throw new Error('Traço inválido. Desfaça a última edição.');
+      const size = stroke.kind === 'bridge' ? stroke.widthMm : stroke.radius;
+      if (!Number.isFinite(size) || size <= 0 || (stroke.kind === 'bridge' && size < 0.5) || size > (stroke.kind === 'bridge' ? 10 : 120)) throw new Error('Tamanho de pincel ou ponte inválido.');
+      for (const point of stroke.points) if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || point.x < 0 || point.y < 0 || point.x >= width || point.y >= height) throw new Error('O traço precisa ficar dentro da imagem original.');
+    }
+  }
+  function addBase(mask, pixels, width, height, margin, options, dpi) {
+    if (!options) return null;
+    const bw = Math.round(options.widthMm / 25.4 * dpi), bh = Math.round(options.heightMm / 25.4 * dpi);
+    const left = Math.floor((width - bw) / 2), top = height - margin - bh, radius = options.shape === 'rounded' ? Math.min(bw, bh) / 2 : 0;
+    const color = options.color.match(/\w\w/g).map(value => parseInt(value, 16));
+    // Find the bottommost artwork point nearest the center and connect it to
+    // the base, including figures with uneven feet or a narrow pedestal.
+    let anchor = -1, nearest = Infinity;
+    for (let y = top + 1; y >= 0 && anchor < 0; y--) for (let x = 0; x < width; x++) if (mask[y * width + x]) {
+      const distance = Math.abs(x - width / 2);
+      if (distance < nearest) { nearest = distance; anchor = y * width + x; }
+    }
+    function paint(i) {
+      mask[i] = 1;
+      const p = i * 4;
+      if (!pixels[p + 3]) { pixels.set(color, p); pixels[p + 3] = 255; }
+    }
+    for (let y = top; y < top + bh; y++) for (let x = left; x < left + bw; x++) {
+      const cx = Math.max(left + radius - 0.5, Math.min(left + bw - radius - 0.5, x));
+      const cy = Math.max(top + radius - 0.5, Math.min(top + bh - radius - 0.5, y));
+      if (!radius || Math.hypot(x - cx, y - cy) <= radius) paint(y * width + x);
+    }
+    if (anchor >= 0) {
+      const ax = anchor % width, ay = Math.floor(anchor / width), bx = Math.max(left + radius, Math.min(left + bw - radius - 1, ax)), by = top + bh / 2;
+      const stroke = { kind: 'bridge', widthMm: 2, points: [{ x: ax, y: ay }, { x: bx, y: by }] };
+      const bridge = rasterEdits([stroke], width, height, { x: 0, y: 0, bounds: { x: 0, y: 0 }, scaleX: 1, scaleY: 1 }, dpi);
+      for (let i = 0; i < mask.length; i++) if (bridge.coverage[i] >= 0.5) paint(i);
+    }
+    return { x: left, y: top, width: bw, height: bh };
+  }
   function processImage(input) {
     const { rgba, width, height, settings } = input;
     if (!width || !height || rgba.length !== width * height * 4) throw new Error('Imagem inválida. Escolha outro arquivo.');
     const backgroundMode = resolveBackgroundMode(rgba, width, height, settings.backgroundMode);
     let mask = segment(rgba, width, height, settings.tolerance, backgroundMode);
     const cleanup = settings.cleanNoise ? removeSpecks(mask, width, height) : { removed: 0, kept: null };
-    const bounds = maskBounds(mask, width, height);
+    const edits = input.edits ?? [];
+    validateEdits(edits, width, height);
+    const sourceEdits = edits.length ? rasterEdits(edits, width, height) : null;
+    if (sourceEdits) for (let i = 0; i < mask.length; i++) if (sourceEdits.values[i] === 1 && sourceEdits.coverage[i] >= 0.5 && rgba[i * 4 + 3] > 16) mask[i] = 1;
+    let bounds = maskBounds(mask, width, height);
     if (!bounds) throw new Error('Nenhuma figura encontrada. Diminua a remoção do branco ou desative a limpeza de pontos.');
+    for (const stroke of edits) if (stroke.kind === 'bridge') for (const point of stroke.points) {
+      const x = Math.floor(point.x), y = Math.floor(point.y), right = Math.max(bounds.x + bounds.width, x + 1), bottom = Math.max(bounds.y + bounds.height, y + 1);
+      bounds.x = Math.min(bounds.x, x); bounds.y = Math.min(bounds.y, y); bounds.width = right - bounds.x; bounds.height = bottom - bounds.y;
+    }
     const dpi = settings.dpi, outputHeight = Math.round(settings.heightCm / 2.54 * dpi), borderPixels = settings.borderMm / 25.4 * dpi;
-    const smoothRadius = settings.smoothing * dpi / 300, margin = Math.ceil(borderPixels + smoothRadius * 2 + 3);
-    const figureHeight = outputHeight - 2 * margin, figureWidth = Math.round(bounds.width / bounds.height * figureHeight), outputWidth = figureWidth + 2 * margin;
-    if (figureHeight < 10 || figureWidth < 1) throw new Error('O contorno está grande para esta altura. Aumente a altura ou diminua o contorno.');
+    let baseOptions = null;
+    if (settings.baseEnabled) {
+      baseOptions = { widthMm: settings.baseWidthMm ?? 60, heightMm: settings.baseHeightMm ?? 8, shape: settings.baseShape ?? 'rounded', color: settings.baseColor ?? '#000000' };
+      if (!Number.isFinite(baseOptions.widthMm) || baseOptions.widthMm < 10 || baseOptions.widthMm > 250 || !Number.isFinite(baseOptions.heightMm) || baseOptions.heightMm < 2 || baseOptions.heightMm > 40 || !['rounded', 'rectangle'].includes(baseOptions.shape) || !/^#[0-9a-f]{6}$/i.test(baseOptions.color)) throw new Error('A base precisa de largura entre 10 e 250 mm, altura entre 2 e 40 mm e uma cor válida.');
+    }
+    const bridgeRadius = edits.reduce((maximum, stroke) => stroke.kind === 'bridge' ? Math.max(maximum, stroke.widthMm / 25.4 * dpi / 2) : maximum, 0);
+    const smoothRadius = settings.smoothing * dpi / 300, margin = Math.ceil(borderPixels + Math.max(smoothRadius * 2, bridgeRadius, baseOptions ? dpi / 25.4 : 0) + 3);
+    const baseHeight = baseOptions ? Math.round(baseOptions.heightMm / 25.4 * dpi) : 0;
+    const figureHeight = outputHeight - 2 * margin - Math.max(0, baseHeight - 1), figureWidth = Math.round(bounds.width / bounds.height * figureHeight);
+    const outputWidth = Math.max(figureWidth, baseOptions ? Math.round(baseOptions.widthMm / 25.4 * dpi) : 0) + 2 * margin, offsetX = Math.floor((outputWidth - figureWidth) / 2);
+    if (figureHeight < 10 || figureWidth < 1) throw new Error('O contorno ou a base estão grandes para esta altura. Aumente a altura ou diminua o contorno e a base.');
     if (outputWidth > 4096 || outputHeight > 4096 || outputWidth * outputHeight > 12000000) throw new Error('O PNG ficou muito grande. Diminua a altura ou escolha 150 dpi (limite: 4096 px por lado e 12 megapixels).');
-    const resized = resizeArtwork(rgba, mask, width, height, bounds, outputWidth, outputHeight, margin, figureWidth, figureHeight);
+    const resized = resizeArtwork(rgba, mask, width, height, bounds, outputWidth, outputHeight, margin, figureWidth, figureHeight, offsetX);
+    const placement = { x: offsetX, y: margin, width: figureWidth, height: figureHeight };
+    const manual = edits.length ? rasterEdits(edits, outputWidth, outputHeight, { x: offsetX, y: margin, bounds, scaleX: figureWidth / bounds.width, scaleY: figureHeight / bounds.height }, dpi) : null;
+    const protectedPixels = manual ? resized.pixels.slice() : null;
     let internalSpaces = null;
     const useInternalFilter = typeof settings.removeInternal === 'boolean';
     const minimumMm = settings.removeInternal ? settings.minInternalMm ?? 2 : 0;
@@ -291,7 +374,8 @@
       const candidate = new Uint8Array(resized.mask.length);
       for (let i = 0; i < candidate.length; i++) {
         const p = i * 4;
-        candidate[i] = !resized.mask[i] || resized.pixels[p + 3] <= 16 || (backgroundMode === 'white' && Math.min(resized.pixels[p], resized.pixels[p + 1], resized.pixels[p + 2]) >= 255 - settings.tolerance) ? 1 : 0;
+        const protectedArt = manual && manual.values[i] === 1 && manual.coverage[i] >= 0.5 && protectedPixels[p + 3] > 16;
+        candidate[i] = !protectedArt && (!resized.mask[i] || resized.pixels[p + 3] <= 16 || (backgroundMode === 'white' && Math.min(resized.pixels[p], resized.pixels[p + 1], resized.pixels[p + 2]) >= 255 - settings.tolerance)) ? 1 : 0;
       }
       internalSpaces = filterInternalSpaces(resized.mask, candidate, outputWidth, outputHeight, minimumMm / 25.4 * dpi, borderPixels, settings.removeInternal, resized.pixels);
     }
@@ -303,17 +387,32 @@
       internalSpaces.opened = finalSpaces.opened;
       internalSpaces.preserved += finalSpaces.preserved;
     } else if (settings.fillHoles) fillInterior(mask, outputWidth, outputHeight);
+    if (manual) for (let i = 0; i < mask.length; i++) {
+      if (manual.coverage[i] < 0.5) continue;
+      const value = manual.values[i], p = i * 4;
+      if (value === 1 && protectedPixels[p + 3] <= 16) continue;
+      mask[i] = value === -1 ? 0 : 1;
+      if (value === 1) resized.pixels.set(protectedPixels.subarray(p, p + 4), p);
+      if (value === 2 && !resized.mask[i]) { resized.pixels[p] = 0; resized.pixels[p + 1] = 0; resized.pixels[p + 2] = 0; resized.pixels[p + 3] = 255; }
+    }
+    const base = addBase(mask, resized.pixels, outputWidth, outputHeight, margin, baseOptions, dpi);
     if (!maskBounds(mask, outputWidth, outputHeight)) throw new Error('A suavização apagou uma figura muito fina. Reduza a suavização.');
     const rendered = renderArtwork(resized.pixels, mask, outputWidth, outputHeight, borderPixels, settings.gradient, gradientOptions(settings));
     const union = uniteRenderedBorders(rendered, outputWidth, outputHeight, settings);
+    // An explicit eraser must win over automatic closing and outline growth.
+    if (manual) for (let i = 0; i < mask.length; i++) if (manual.values[i] === -1) {
+      const p = i * 4, alpha = Math.round(rendered.output[p + 3] * (1 - manual.coverage[i]));
+      rendered.output[p + 3] = alpha; rendered.silhouette[p + 3] = alpha;
+      if (!alpha) { rendered.output[p] = 0; rendered.output[p + 1] = 0; rendered.output[p + 2] = 0; }
+    }
     if (internalSpaces && union.spaces) {
       internalSpaces.opened = union.spaces.opened;
       internalSpaces.preserved += union.spaces.preserved;
     }
-    return { width: outputWidth, height: outputHeight, rgba: rendered.output, silhouette: rendered.silhouette, dpi, removed: cleanup.removed, sourceBounds: bounds, figurePixels: figureHeight, margin, internalSpaces, joinedPixels: union.addedPixels, backgroundMode };
+    return { width: outputWidth, height: outputHeight, rgba: rendered.output, silhouette: rendered.silhouette, dpi, removed: cleanup.removed, sourceBounds: bounds, figurePixels: figureHeight, margin, internalSpaces, joinedPixels: union.addedPixels, backgroundMode, placement, base };
   }
   function workerSource() {
-    return '"use strict";\n' + [floodExterior, resolveBackgroundMode, segment, removeSpecks, fillInterior, filterInternalSpaces, maskBounds, distanceTo, boxBlur, smoothMask, resizeArtwork, gradientOptions, closeOutline, uniteRenderedBorders, gradientGray, renderArtwork, processImage].map(fn => fn.toString()).join('\n') + '\nself.onmessage = function(event) { const { id, input } = event.data; try { const result = processImage(input); self.postMessage({ id, result }, [result.rgba.buffer, result.silhouette.buffer]); } catch (error) { self.postMessage({ id, error: error.message }); } };';
+    return '"use strict";\n' + [floodExterior, resolveBackgroundMode, segment, removeSpecks, fillInterior, filterInternalSpaces, maskBounds, distanceTo, boxBlur, smoothMask, resizeArtwork, gradientOptions, closeOutline, uniteRenderedBorders, gradientGray, renderArtwork, rasterEdits, validateEdits, addBase, processImage].map(fn => fn.toString()).join('\n') + '\nself.onmessage = function(event) { const { id, input } = event.data; try { const result = processImage(input); self.postMessage({ id, result }, [result.rgba.buffer, result.silhouette.buffer]); } catch (error) { self.postMessage({ id, error: error.message }); } };';
   }
   const api = { processImage, workerSource, segment, resolveBackgroundMode, distanceTo, smoothMask, fillInterior, maskBounds, removeSpecks, gradientOptions, gradientGray };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -1,13 +1,15 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const state = { source: null, result: null, view: 'result', worker: null, revision: 0, loadRevision: 0, debounce: null, name: 'totem', originalSize: null };
+const state = { source: null, result: null, view: 'result', worker: null, revision: 0, loadRevision: 0, debounce: null, name: 'totem', originalSize: null, edits: [] };
 const gradientControlIds = ['gradientDepth', 'gradientStrength', 'gradientLight', 'gradientCurve'];
-const controlIds = ['backgroundMode', 'tolerance', 'smoothing', 'border', 'joinBorders', 'gradient', ...gradientControlIds, 'cleanNoise', 'removeInternal', 'minInternal', 'height', 'dpi'];
+const controlIds = ['backgroundMode', 'tolerance', 'smoothing', 'border', 'joinBorders', 'gradient', ...gradientControlIds, 'cleanNoise', 'removeInternal', 'minInternal', 'baseEnabled', 'baseShape', 'baseWidth', 'baseHeight', 'baseColor', 'height', 'dpi'];
 function message(text, error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); }
 function settings() {
-  return { backgroundMode: $('backgroundMode').value, tolerance: +$('tolerance').value, smoothing: +$('smoothing').value, borderMm: +$('border').value, joinBordersMm: +$('joinBorders').value, gradient: $('gradient').value, gradientDepth: +$('gradientDepth').value, gradientStrength: +$('gradientStrength').value, gradientLight: +$('gradientLight').value, gradientCurve: $('gradientCurve').value, cleanNoise: $('cleanNoise').checked, removeInternal: $('removeInternal').checked, minInternalMm: +$('minInternal').value, heightCm: +$('height').value, dpi: +$('dpi').value };
+  return { backgroundMode: $('backgroundMode').value, tolerance: +$('tolerance').value, smoothing: +$('smoothing').value, borderMm: +$('border').value, joinBordersMm: +$('joinBorders').value, gradient: $('gradient').value, gradientDepth: +$('gradientDepth').value, gradientStrength: +$('gradientStrength').value, gradientLight: +$('gradientLight').value, gradientCurve: $('gradientCurve').value, cleanNoise: $('cleanNoise').checked, removeInternal: $('removeInternal').checked, minInternalMm: +$('minInternal').value, baseEnabled: $('baseEnabled').checked, baseShape: $('baseShape').value, baseWidthMm: +$('baseWidth').value, baseHeightMm: +$('baseHeight').value, baseColor: $('baseColor').value, heightCm: +$('height').value, dpi: +$('dpi').value };
 }
 function updateLabels() {
+  for (const id of ['baseShape', 'baseWidth', 'baseHeight', 'baseColor']) $(id).disabled = !$('baseEnabled').checked;
+  $('baseSettings').classList.toggle('inactive', !$('baseEnabled').checked);
   const requestedMode = $('backgroundMode').value;
   const mode = state.source ? TotemEngine.resolveBackgroundMode(state.source.data, state.source.width, state.source.height, requestedMode) : requestedMode;
   const preserveWhites = mode === 'alpha';
@@ -58,7 +60,7 @@ function runProcessing() {
   message('');
   if (!Number.isFinite(config.heightCm) || config.heightCm < 2 || config.heightCm > 30) { failed('Informe uma altura entre 2 e 30 cm.'); return; }
   if ($('removeInternal').checked && (!$('minInternal').value.trim() || !Number.isFinite(config.minInternalMm) || config.minInternalMm < 0 || config.minInternalMm > 20)) { failed('Informe um limite de espaços internos entre 0 e 20 mm.'); return; }
-  const input = { rgba: state.source.data.slice(), width: state.source.width, height: state.source.height, settings: config };
+  const input = { rgba: state.source.data.slice(), width: state.source.width, height: state.source.height, settings: config, edits: state.edits };
   try {
     const url = URL.createObjectURL(new Blob([TotemEngine.workerSource()], { type: 'text/javascript' }));
     const worker = new Worker(url); URL.revokeObjectURL(url); state.worker = worker;
@@ -96,6 +98,8 @@ function completed(result, config) {
   if (state.originalSize.height < result.figurePixels) notes.push('A imagem foi ampliada. Uma original maior preserva mais detalhes na impressão.');
   if (result.removed) notes.push(`${result.removed} ${result.removed === 1 ? 'ponto solto removido' : 'pontos soltos removidos'}.`);
   if (result.joinedPixels) notes.push('Frestas pequenas fechadas no contorno final.');
+  if (state.edits.length) notes.push(`${state.edits.length} ${state.edits.length === 1 ? 'edição manual aplicada' : 'edições manuais aplicadas'}.`);
+  if (result.base) notes.push('Base incluída na altura total.');
   if (result.internalSpaces && config.removeInternal) {
     const { opened, preserved } = result.internalSpaces;
     notes.push(`${opened} ${opened === 1 ? 'espaço interno aberto' : 'espaços internos abertos'}${preserved ? `; ${preserved} ${preserved === 1 ? 'preservado abaixo do limite' : 'preservados abaixo do limite'}` : ''}.`);
@@ -105,12 +109,14 @@ function completed(result, config) {
   message(notes.join(' ')); renderPreview();
 }
 function renderPreview() {
+  TotemEditor.update();
   const canvas = $('previewCanvas'), context = canvas.getContext('2d');
   const image = state.view === 'original' ? state.source : state.result;
   if (!image) { canvas.hidden = true; $('viewBadge').hidden = true; $('emptyState').hidden = Boolean(state.source); return; }
   canvas.width = image.width; canvas.height = image.height;
   const rgba = state.view === 'original' ? image.data : state.view === 'cut' ? image.silhouette : image.rgba;
   context.putImageData(new ImageData(rgba, image.width, image.height), 0, 0);
+  TotemEditor.drawOverlay(canvas);
   canvas.hidden = false; $('emptyState').hidden = true;
   $('viewBadge').hidden = false;
   $('viewBadge').textContent = state.view === 'original' ? 'IMAGEM ORIGINAL' : state.view === 'cut' ? 'CONFIRA AS PARTES DO RECORTE' : 'FUNDO TRANSPARENTE';
@@ -132,6 +138,7 @@ async function loadImage(file, demo = false) {
     const context = canvas.getContext('2d', { willReadFrequently: true });
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     state.source = context.getImageData(0, 0, canvas.width, canvas.height);
+    TotemEditor.reset();
     state.originalSize = { width: image.naturalWidth, height: image.naturalHeight };
     state.name = demo ? 'raposa-exemplo' : file.name.replace(/\.[^.]+$/, '').replace(/[^\p{L}\p{N}_ -]/gu, '').slice(0, 80) || 'totem';
     state.result = null;
@@ -259,5 +266,6 @@ $('includeMirror').addEventListener('change', updateExportMode);
 $('helpButton').addEventListener('click', () => $('helpDialog').showModal());
 $('closeHelp').addEventListener('click', () => $('helpDialog').close());
 $('helpDialog').addEventListener('click', event => { if (event.target === $('helpDialog')) { const r = event.target.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) event.target.close(); } });
+TotemEditor.init({ state, $, queueProcess, renderPreview, setView, controlIds, updateExportMode });
 updateLabels();
 updateExportMode();

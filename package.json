@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test tests/processing.test.cjs",
-    "test:browser": "node tests/browser.cjs"
+    "test:browser": "node tests/browser.cjs",
+    "test:editor": "node tests/editor.cjs"
   },
   "devDependencies": {
     "playwright": "^1.64.0"
