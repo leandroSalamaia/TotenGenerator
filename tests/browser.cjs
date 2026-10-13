@@ -200,12 +200,53 @@ async function main() {
     await page.waitForFunction(() => !document.getElementById('exportButton').disabled);
     await page.locator('#tolerance').fill('45'); await page.locator('#tolerance').fill('22'); await page.locator('#tolerance').fill('32');
     await page.waitForFunction(() => !document.getElementById('exportButton').disabled);
+    // Model an exterior slot between two pieces whose contours almost meet.
+    // Verify the actual result, cut preview and exported PNG all receive union.
+    await page.locator('#height').fill('4'); await page.locator('#dpi').selectOption('150');
+    await page.locator('#smoothing').fill('0'); await page.locator('#border').fill('1');
+    await page.locator('#joinBorders').fill('0'); await page.locator('#gradient').selectOption('outward');
+    const joinSource = await page.evaluate(() => {
+      const canvas = document.createElement('canvas'); canvas.width = 200; canvas.height = 240;
+      const context = canvas.getContext('2d'); context.fillStyle = 'white'; context.fillRect(0, 0, 200, 240);
+      context.fillStyle = '#23416e'; context.fillRect(20, 20, 60, 200); context.fillRect(100, 20, 80, 200);
+      return canvas.toDataURL('image/png').split(',')[1];
+    });
+    await page.locator('#fileInput').setInputFiles({ name: 'teste-uniao.png', mimeType: 'image/png', buffer: Buffer.from(joinSource, 'base64') });
+    await page.waitForFunction(() => document.getElementById('uploadTitle').textContent === 'teste-uniao.png' && !document.getElementById('exportButton').disabled);
+    const gapAlpha = () => page.locator('#previewCanvas').evaluate(canvas => {
+      const margin = 9, figureHeight = canvas.height - 2 * margin, figureWidth = canvas.width - 2 * margin;
+      const x = margin + Math.floor(70.5 / 160 * figureWidth), y = margin + Math.floor(100.5 / 200 * figureHeight);
+      return canvas.getContext('2d').getImageData(x, y, 1, 1).data[3];
+    });
+    assert.equal(await gapAlpha(), 0);
+    await page.locator('#joinBorders').fill('2');
+    await page.waitForFunction(() => !document.getElementById('exportButton').disabled);
+    assert.equal(await page.locator('#joinBordersValue').textContent(), '2,0 mm');
+    assert.equal(await gapAlpha(), 255);
+    await page.locator('#cutTab').click(); assert.equal(await gapAlpha(), 255);
+    await page.locator('#resultTab').click();
+    const unionDownloadPromise = page.waitForEvent('download'); await page.locator('#exportButton').click();
+    const unionDownload = await unionDownloadPromise, unionPath = path.join(artifactDir, unionDownload.suggestedFilename());
+    await unionDownload.saveAs(unionPath); const unionPng = await fs.readFile(unionPath);
+    const downloadedGap = await page.evaluate(async url => {
+      const image = new Image(); image.src = url; await image.decode();
+      const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+      const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+      const margin = 9, x = margin + Math.floor(70.5 / 160 * (canvas.width - margin * 2)), y = margin + Math.floor(100.5 / 200 * (canvas.height - margin * 2));
+      return [...context.getImageData(x, y, 1, 1).data];
+    }, `data:image/png;base64,${unionPng.toString('base64')}`);
+    assert.deepEqual(downloadedGap, [0, 0, 0, 255]);
+    await page.locator('#joinBorders').fill('0');
+    await page.waitForFunction(() => !document.getElementById('exportButton').disabled);
+    assert.equal(await gapAlpha(), 0);
+    await page.locator('#joinBorders').fill('2');
+    await page.waitForFunction(() => !document.getElementById('exportButton').disabled);
     await page.locator('#helpButton').click(); assert.equal(await page.locator('#helpDialog').isVisible(), true); await page.keyboard.press('Escape');
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({ path: path.join(artifactDir, 'mobile.png'), fullPage: true });
     assert.deepEqual(errors, []);
-    console.log(`Browser passed: original PNG or ZIP with 2 pixel-exact horizontally mirrored PNGs, ZIP headers and CRCs, matching dimensions/transparency/300 dpi, gradient controls, preview/export colors, no white fills, error recovery, mobile layout.`);
+    console.log(`Browser passed: finished border union in result/cut/export, union on/off, original PNG or ZIP with 2 pixel-exact mirrored PNGs, ZIP CRCs, dimensions/transparency/DPI, gradient controls, preview/export colors, no white fills, error recovery, mobile layout.`);
   } finally { await browser.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

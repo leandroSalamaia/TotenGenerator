@@ -168,6 +168,63 @@
     }
     return { depth: depth / 100, strength: strength / 100, light, curve };
   }
+  function closeOutline(mask, width, height, radius) {
+    if (radius <= 0) return mask.slice();
+    // Padding prevents dilation from being clipped by the export canvas before
+    // erosion. The union can then safely preserve artwork near an image edge.
+    const padding = Math.ceil(radius) + 2, pw = width + padding * 2, ph = height + padding * 2;
+    const padded = new Uint8Array(pw * ph);
+    for (let y = 0; y < height; y++) padded.set(mask.subarray(y * width, (y + 1) * width), (y + padding) * pw + padding);
+    const outside = distanceTo(padded, pw, ph, 1);
+    const dilated = Uint8Array.from(outside, value => value <= radius ? 1 : 0);
+    const inside = distanceTo(dilated, pw, ph, 0), closed = new Uint8Array(mask.length);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      closed[i] = mask[i] || inside[(y + padding) * pw + x + padding] > radius ? 1 : 0;
+    }
+    return closed;
+  }
+  function uniteRenderedBorders(rendered, width, height, settings) {
+    const joinMm = settings.joinBordersMm ?? 0;
+    if (!Number.isFinite(joinMm) || joinMm < 0 || joinMm > 6) throw new Error('Informe uma união de bordas entre 0 e 6 mm.');
+    if (!joinMm && !settings.removeInternal) return { addedPixels: 0, spaces: null };
+    const original = new Uint8Array(width * height);
+    for (let i = 0; i < original.length; i++) original[i] = rendered.output[i * 4 + 3] >= 128 ? 1 : 0;
+    const closed = closeOutline(original, width, height, joinMm / 25.4 * settings.dpi / 2);
+    let spaces = null;
+    if (settings.removeInternal) {
+      // Offsetting can seal an exterior opening and leave a new tiny internal
+      // hole. Apply the size rule to the finished contour as well as the art.
+      const candidate = Uint8Array.from(closed, value => value ? 0 : 1);
+      spaces = filterInternalSpaces(closed, candidate, width, height, (settings.minInternalMm ?? 2) / 25.4 * settings.dpi, 0, true);
+    }
+    const added = new Uint8Array(original.length);
+    let addedPixels = 0;
+    for (let i = 0; i < added.length; i++) if (closed[i] && !original[i]) { added[i] = 1; addedPixels++; }
+    if (!addedPixels) return { addedPixels, spaces };
+    // Blend the existing contour into the new bridges. Only transparent or
+    // partially transparent pixels are touched; opaque artwork stays intact.
+    const gray = gradientGray(1, settings.gradient, gradientOptions(settings));
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const i = y * width + x, p = i * 4, oldAlpha = rendered.output[p + 3];
+      if (oldAlpha === 255) continue;
+      let covered = 0, hasAddition = false;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+        const next = ny * width + nx;
+        covered += closed[next]; hasAddition ||= Boolean(added[next]);
+      }
+      if (!hasAddition) continue;
+      const coverage = Math.max(closed[i] ? 0.5 : 0, Math.min(1, Math.max(0, (covered / 9 - 0.25) * 2)));
+      const alpha = Math.max(oldAlpha, Math.round(coverage * 255));
+      if (alpha === oldAlpha) continue;
+      for (let c = 0; c < 3; c++) rendered.output[p + c] = (rendered.output[p + c] * oldAlpha + gray * (alpha - oldAlpha)) / alpha;
+      rendered.output[p + 3] = alpha;
+      rendered.silhouette[p] = 36; rendered.silhouette[p + 1] = 62; rendered.silhouette[p + 2] = 52; rendered.silhouette[p + 3] = alpha;
+    }
+    return { addedPixels, spaces };
+  }
   function gradientGray(position, direction, options) {
     if (direction === 'solid') return 0;
     // Depth reserves a solid dark band at the selected dark end of the outline.
@@ -234,10 +291,15 @@
     } else if (settings.fillHoles) fillInterior(mask, outputWidth, outputHeight);
     if (!maskBounds(mask, outputWidth, outputHeight)) throw new Error('A suavização apagou uma figura muito fina. Reduza a suavização.');
     const rendered = renderArtwork(resized.pixels, mask, outputWidth, outputHeight, borderPixels, settings.gradient, gradientOptions(settings));
-    return { width: outputWidth, height: outputHeight, rgba: rendered.output, silhouette: rendered.silhouette, dpi, removed: cleanup.removed, sourceBounds: bounds, figurePixels: figureHeight, margin, internalSpaces };
+    const union = uniteRenderedBorders(rendered, outputWidth, outputHeight, settings);
+    if (internalSpaces && union.spaces) {
+      internalSpaces.opened = union.spaces.opened;
+      internalSpaces.preserved += union.spaces.preserved;
+    }
+    return { width: outputWidth, height: outputHeight, rgba: rendered.output, silhouette: rendered.silhouette, dpi, removed: cleanup.removed, sourceBounds: bounds, figurePixels: figureHeight, margin, internalSpaces, joinedPixels: union.addedPixels };
   }
   function workerSource() {
-    return '"use strict";\n' + [floodExterior, segment, removeSpecks, fillInterior, filterInternalSpaces, maskBounds, distanceTo, boxBlur, smoothMask, resizeArtwork, gradientOptions, gradientGray, renderArtwork, processImage].map(fn => fn.toString()).join('\n') + '\nself.onmessage = function(event) { const { id, input } = event.data; try { const result = processImage(input); self.postMessage({ id, result }, [result.rgba.buffer, result.silhouette.buffer]); } catch (error) { self.postMessage({ id, error: error.message }); } };';
+    return '"use strict";\n' + [floodExterior, segment, removeSpecks, fillInterior, filterInternalSpaces, maskBounds, distanceTo, boxBlur, smoothMask, resizeArtwork, gradientOptions, closeOutline, uniteRenderedBorders, gradientGray, renderArtwork, processImage].map(fn => fn.toString()).join('\n') + '\nself.onmessage = function(event) { const { id, input } = event.data; try { const result = processImage(input); self.postMessage({ id, result }, [result.rgba.buffer, result.silhouette.buffer]); } catch (error) { self.postMessage({ id, error: error.message }); } };';
   }
   const api = { processImage, workerSource, segment, distanceTo, smoothMask, fillInterior, maskBounds, removeSpecks, gradientOptions, gradientGray };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

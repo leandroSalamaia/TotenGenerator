@@ -190,3 +190,52 @@ test('advanced inward gradient keeps protected spaces dark and solid mode ignore
   const tunedSolid = engine.processImage({ ...src, settings: { ...config, gradient: 'solid', gradientDepth: 85, gradientStrength: 0, gradientLight: 240, gradientCurve: 'sharp' } });
   assert.deepEqual(tunedSolid.rgba, solid.rgba);
 });
+
+function barFixture(gap = 6) {
+  const src = image(200, 240);
+  src.rect(20, 20, 60, 200, [35, 65, 110, 255]);
+  src.rect(80 + gap, 20, 100 - gap, 200, [35, 65, 110, 255]);
+  return src;
+}
+test('joins nearby finished contours, preserving larger gaps and original artwork', () => {
+  const opts = { ...config, borderMm: 0, removeInternal: true, minInternalMm: 2 };
+  const separate = engine.processImage({ ...barFixture(), settings: { ...opts, joinBordersMm: 0 } });
+  const joined = engine.processImage({ ...barFixture(), settings: { ...opts, joinBordersMm: 2 } });
+  assert.equal(sourcePixel(separate, 83, 120)[3], 0);
+  assert.equal(sourcePixel(joined, 83, 120)[3], 255);
+  assert.deepEqual(sourcePixel(joined, 50, 120), [35, 65, 110, 255]);
+  assert.equal(joined.rgba[3], 0);
+  const wider = engine.processImage({ ...barFixture(20), settings: { ...opts, joinBordersMm: 2 } });
+  assert.equal(sourcePixel(wider, 90, 120)[3], 0);
+  for (let i = 3; i < joined.rgba.length; i += 4) assert.equal(joined.rgba[i], joined.silhouette[i]);
+});
+test('joining width applies to the gap left after the outline expands', () => {
+  const src = barFixture(20), opts = { ...config, borderMm: 1, removeInternal: true, minInternalMm: 2 };
+  const separate = engine.processImage({ ...src, settings: { ...opts, joinBordersMm: 0 } });
+  const joined = engine.processImage({ ...src, settings: { ...opts, joinBordersMm: 2 } });
+  assert.equal(sourcePixel(separate, 90, 120)[3], 0);
+  assert.equal(sourcePixel(joined, 90, 120)[3], 255);
+});
+test('protects small holes created only after offsetting an exterior opening', () => {
+  for (const size of [20, 40]) {
+    const src = image(200, 240); src.rect(20, 20, 160, 200, [35, 65, 110, 255]);
+    src.rect(75, 80, size, size, [255, 255, 255, 255]);
+    src.rect(80, 20, 3, 61, [255, 255, 255, 255]);
+    const out = engine.processImage({ ...src, settings: { ...config, borderMm: 1, removeInternal: true, minInternalMm: 2, joinBordersMm: 0 } });
+    assert.equal(sourcePixel(out, 75 + size / 2, 80 + size / 2)[3], size === 20 ? 255 : 0);
+  }
+});
+test('joining uses physical dimensions consistently at 150 and 300 dpi', () => {
+  for (const dpi of [150, 300]) for (const heightCm of [4, 8]) {
+    const out = engine.processImage({ ...barFixture(), settings: { ...config, borderMm: 0, dpi, heightCm, joinBordersMm: 2, removeInternal: true, minInternalMm: 2 } });
+    assert.equal(sourcePixel(out, 83, 120)[3], heightCm === 4 ? 255 : 0);
+  }
+});
+test('wide joining preserves every opaque pixel without clipping the export edges', () => {
+  const src = barFixture(), opts = { ...config, borderMm: 0, removeInternal: true, minInternalMm: 2 };
+  const original = engine.processImage({ ...src, settings: { ...opts, joinBordersMm: 0 } });
+  const joined = engine.processImage({ ...src, settings: { ...opts, joinBordersMm: 6 } });
+  assert.equal(joined.width, original.width); assert.equal(joined.height, original.height);
+  for (let p = 0; p < original.rgba.length; p += 4) if (original.rgba[p + 3] === 255) assert.deepEqual(joined.rgba.subarray(p, p + 4), original.rgba.subarray(p, p + 4));
+  assert.equal(joined.rgba[3], 0);
+});

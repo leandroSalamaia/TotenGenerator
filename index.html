@@ -47,6 +47,9 @@
             <div class="section-title"><span class="number">03</span><h2>Contorno e acabamento</h2></div>
             <label class="range-label" for="border">Espessura do contorno <output id="borderValue">2,0 mm</output></label>
             <input id="border" type="range" min="0" max="6" step="0.1" value="2"><div class="range-hints"><span>Sem contorno</span><span>6 mm</span></div>
+            <label class="range-label" for="joinBorders">União das bordas <output id="joinBordersValue">2,0 mm</output></label>
+            <input id="joinBorders" type="range" min="0" max="6" step="0.1" value="2"><div class="range-hints"><span>Sem união extra</span><span>Fechar mais frestas</span></div>
+            <p class="setting-note join-note" id="joinBordersNote">Fecha frestas de até aproximadamente 2 mm entre os contornos, preservando aberturas maiores.</p>
             <label class="field-label" for="gradient">Acabamento da borda</label>
             <select id="gradient"><option value="outward">Degradê → preto na borda externa</option><option value="inward">Degradê → preto junto à figura</option><option value="solid">Preto uniforme</option></select>
             <div class="gradient-swatch" id="gradientSwatch"><span>FIGURA</span><div></div><span>RECORTE</span></div>

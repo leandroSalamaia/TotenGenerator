@@ -2,15 +2,18 @@
 const $ = id => document.getElementById(id);
 const state = { source: null, result: null, view: 'result', worker: null, revision: 0, loadRevision: 0, debounce: null, name: 'totem', originalSize: null };
 const gradientControlIds = ['gradientDepth', 'gradientStrength', 'gradientLight', 'gradientCurve'];
-const controlIds = ['tolerance', 'smoothing', 'border', 'gradient', ...gradientControlIds, 'cleanNoise', 'removeInternal', 'minInternal', 'height', 'dpi'];
+const controlIds = ['tolerance', 'smoothing', 'border', 'joinBorders', 'gradient', ...gradientControlIds, 'cleanNoise', 'removeInternal', 'minInternal', 'height', 'dpi'];
 function message(text, error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); }
 function settings() {
-  return { tolerance: +$('tolerance').value, smoothing: +$('smoothing').value, borderMm: +$('border').value, gradient: $('gradient').value, gradientDepth: +$('gradientDepth').value, gradientStrength: +$('gradientStrength').value, gradientLight: +$('gradientLight').value, gradientCurve: $('gradientCurve').value, cleanNoise: $('cleanNoise').checked, removeInternal: $('removeInternal').checked, minInternalMm: +$('minInternal').value, heightCm: +$('height').value, dpi: +$('dpi').value };
+  return { tolerance: +$('tolerance').value, smoothing: +$('smoothing').value, borderMm: +$('border').value, joinBordersMm: +$('joinBorders').value, gradient: $('gradient').value, gradientDepth: +$('gradientDepth').value, gradientStrength: +$('gradientStrength').value, gradientLight: +$('gradientLight').value, gradientCurve: $('gradientCurve').value, cleanNoise: $('cleanNoise').checked, removeInternal: $('removeInternal').checked, minInternalMm: +$('minInternal').value, heightCm: +$('height').value, dpi: +$('dpi').value };
 }
 function updateLabels() {
   $('toleranceValue').value = $('tolerance').value;
   $('smoothingValue').value = $('smoothing').value;
   $('borderValue').value = (+$('border').value).toLocaleString('pt-BR', { minimumFractionDigits: 1 }) + ' mm';
+  const join = (+$('joinBorders').value).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+  $('joinBordersValue').value = (+$('joinBorders').value).toLocaleString('pt-BR', { minimumFractionDigits: 1 }) + ' mm';
+  $('joinBordersNote').textContent = +$('joinBorders').value > 0 ? `Fecha frestas de até aproximadamente ${join} mm entre os contornos, preservando aberturas maiores.` : 'Sem união extra entre os contornos. O limite de espaços internos continua protegendo furos pequenos.';
   $('minInternal').disabled = !$('removeInternal').checked;
   const minimum = (+$('minInternal').value).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
   document.querySelector('.internal-space-setting .setting-note').textContent = $('removeInternal').checked
@@ -83,6 +86,7 @@ function completed(result, config) {
   const notes = [];
   if (state.originalSize.height < result.figurePixels) notes.push('A imagem foi ampliada. Uma original maior preserva mais detalhes na impressão.');
   if (result.removed) notes.push(`${result.removed} ${result.removed === 1 ? 'ponto solto removido' : 'pontos soltos removidos'}.`);
+  if (result.joinedPixels) notes.push('Frestas pequenas fechadas no contorno final.');
   if (result.internalSpaces && config.removeInternal) {
     const { opened, preserved } = result.internalSpaces;
     notes.push(`${opened} ${opened === 1 ? 'espaço interno aberto' : 'espaços internos abertos'}${preserved ? `; ${preserved} ${preserved === 1 ? 'preservado abaixo do limite' : 'preservados abaixo do limite'}` : ''}.`);
