@@ -96,12 +96,20 @@
           </section>
           <section class="setting-section foil-section">
             <h2>Efeitos foil</h2>
-            <p class="setting-note">Escolha um efeito e clique na arte para posicionar. Arraste para mover.</p>
-            <div id="foilPalette" class="foil-palette" role="group" aria-label="Efeitos foil prontos"></div>
+            <p class="setting-note">Partículas, faíscas e magia como uma cena de jogo. Escolha um efeito, clique na arte e arraste para mover.</p>
+            <div id="foilPalette" role="group" aria-label="Efeitos foil prontos"></div>
             <label class="field-label" for="foilSelect">Efeito selecionado</label><select id="foilSelect"><option value="">Nenhum efeito</option></select>
             <label class="range-label" for="foilSize">Tamanho <output id="foilSizeValue">18 mm</output></label><input id="foilSize" type="range" min="4" max="60" step="0.5" value="18">
             <label class="range-label" for="foilRotation">Rotação <output id="foilRotationValue">0°</output></label><input id="foilRotation" type="range" min="-180" max="180" step="1" value="0">
             <label class="range-label" for="foilLine">Espessura do traço <output id="foilLineValue">0,3 mm</output></label><input id="foilLine" type="range" min="0.1" max="1.5" step="0.1" value="0.3">
+            <div id="foilParticleSettings" hidden>
+              <label class="range-label" for="foilCount">Quantidade de partículas <output id="foilCountValue">80</output></label><input id="foilCount" type="range" min="10" max="180" step="1" value="80">
+              <label class="range-label" for="foilSpread">Dispersão <output id="foilSpreadValue">85%</output></label><input id="foilSpread" type="range" min="25" max="100" step="1" value="85">
+              <label class="range-label" for="foilParticleSize">Tamanho das partículas <output id="foilParticleSizeValue">0,5 mm</output></label><input id="foilParticleSize" type="range" min="0.15" max="1.5" step="0.05" value="0.5">
+              <label class="range-label" for="foilGlow">Brilho e halo <output id="foilGlowValue">70%</output></label><input id="foilGlow" type="range" min="0" max="100" step="1" value="70">
+              <div class="small-actions"><button id="varyFoil" type="button">Variar partículas</button></div>
+              <p class="setting-note">O PNG captura o efeito parado. O brilho usa transparência suave; reduza a zero para partículas nítidas.</p>
+            </div>
             <label class="field-label" for="foilColor">Cor na arte com foil</label><div class="foil-colors"><input id="foilColor" type="color" value="#d6ae55"><button type="button" data-foil-color="#d6ae55">Ouro</button><button type="button" data-foil-color="#c6ccd3">Prata</button><button type="button" data-foil-color="#c6804d">Cobre</button></div>
             <label class="field-label" for="foilExportColor">PNG do foil isolado</label><select id="foilExportColor"><option value="black">Preto sobre fundo transparente</option><option value="preview">Cor escolhida na prévia</option></select>
             <div class="small-actions"><button id="duplicateFoil" type="button">Duplicar</button><button id="removeFoil" type="button">Remover</button><button id="clearFoil" type="button">Limpar foil</button></div>

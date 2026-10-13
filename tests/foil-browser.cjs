@@ -65,14 +65,14 @@ async function validateBundle(page, bundle, black = true) {
     const previewContext = previewCanvas.getContext('2d'); previewContext.drawImage(previewImage, 0, 0);
     const preview = previewContext.getImageData(0, 0, width, height).data;
     let mirrorErrors = 0, foilPixels = 0, changedPixels = 0, foilColorErrors = 0, edgeErrors = 0, outsideArt = 0;
-    const color = state.foilEffects[0].color.match(/\w\w/g).map(v => parseInt(v, 16));
+    const color = state.foilEffects[0].color.match(/\w\w/g).map(v => parseInt(v, 16)), particleMode = FoilEngine.templates.find(item => item.id === state.foilEffects[0].type).particle;
     for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
       const p = (y * width + x) * 4, m = (y * width + width - 1 - x) * 4;
       for (let c = 0; c < 4; c++) if (art[p + c] !== mirror[m + c]) mirrorErrors++;
       if (foil[p + 3]) {
         foilPixels++;
         if (!art[p + 3]) outsideArt++;
-        for (let c = 0; c < 3; c++) if ((black && foil[p + c] !== 0) || (!black && foil[p + 3] === 255 && foil[p + c] !== color[c])) foilColorErrors++;
+        for (let c = 0; c < 3; c++) if ((black && foil[p + c] !== 0) || (!black && foil[p + 3] === 255 && (particleMode ? foil[p + c] < color[c] - 1 : foil[p + c] !== color[c]))) foilColorErrors++;
       }
       if (art[p] !== composite[p] || art[p + 3] !== composite[p + 3]) changedPixels++;
       if (x === 0 || y === 0 || x === width - 1 || y === height - 1) for (const image of decoded) if (image[p + 3]) edgeErrors++;
@@ -91,7 +91,7 @@ async function main() {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1150 }, hasTouch: true });
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     await page.goto(pathToFileURL(path.resolve(__dirname, '../index.html')).href);
-    assert.equal(await page.locator('[data-foil-template]').count(), 6);
+    assert.equal(await page.locator('[data-foil-template]').count(), 12);
     const png = await page.evaluate(() => {
       const c = document.createElement('canvas'); c.width = 220; c.height = 260; const ctx = c.getContext('2d');
       ctx.fillStyle = '#84776b'; ctx.fillRect(50, 225, 145, 15);
@@ -133,7 +133,7 @@ async function main() {
       let count = 0, hash = 0; for (let i = 3; i < data.length; i += 4) { if (data[i]) count++; hash = ((hash * 31) ^ data[i]) >>> 0; }
       return { count, hash };
     }));
-    assert.ok(gallery.every(item => item.count > 30)); assert.equal(new Set(gallery.map(item => item.hash)).size, 6);
+    assert.ok(gallery.every(item => item.count > 30)); assert.equal(new Set(gallery.map(item => item.hash)).size, 12);
     await page.locator('#duplicateFoil').click(); assert.equal(await page.evaluate(() => state.foilEffects.length), 2);
     const ids = await page.evaluate(() => state.foilEffects.map(effect => effect.id));
     await page.locator('#foilSelect').selectOption(ids[0]); assert.equal(await page.locator('#foilSelect').inputValue(), ids[0]);
@@ -167,8 +167,38 @@ async function main() {
     // Loading a different source resets foil and restores standard downloads.
     await upload(); await ready(page); assert.equal(await page.evaluate(() => state.foilEffects.length), 0);
     assert.equal(await page.locator('#exportButtonLabel').textContent(), 'Baixar PNG');
+    // Game particles use a frozen seed, so the preview and both foil export modes agree.
+    await page.evaluate(() => { window.beforeFoil = state.result.rgba.slice(); });
+    await add(page, 'particle-magic', 170, 20);
+    assert.equal(await page.locator('#foilParticleSettings').isVisible(), true);
+    await page.locator('#foilCount').fill('120'); await page.locator('#foilSpread').fill('90'); await page.locator('#foilParticleSize').fill('0.65'); await page.locator('#foilGlow').fill('80');
+    const parameters = await page.evaluate(() => ({ ...state.foilEffects[0] }));
+    assert.equal(parameters.count, 120); assert.equal(parameters.spread, 90); assert.equal(parameters.particleMm, 0.65); assert.equal(parameters.glow, 80);
+    const stable = await page.locator('#previewCanvas').evaluate(c => c.toDataURL());
+    await page.evaluate(() => renderPreview()); assert.equal(await page.locator('#previewCanvas').evaluate(c => c.toDataURL()), stable);
+    await page.locator('#foilExportColor').selectOption('black'); await validateBundle(page, await download(page, 'mago-particulas-black.zip'));
+    await page.locator('#foilExportColor').selectOption('preview'); await validateBundle(page, await download(page, 'mago-particulas-color.zip'), false);
+    const footprint = () => page.evaluate(() => { const c = TotemFoil.layers(state.result).foil, data = c.getContext('2d').getImageData(0,0,c.width,c.height).data; let count = 0; for (let i = 3; i < data.length; i += 4) if (data[i]) count++; return count; });
+    const glowing = await footprint(); await page.locator('#foilGlow').fill('0'); assert.ok(await footprint() < glowing * 0.7);
+    await page.locator('#foilGlow').fill('80');
+    await page.locator('#varyFoil').click(); const varied = await page.evaluate(() => state.foilEffects[0].seed); assert.notEqual(varied, parameters.seed);
+    const variant = await page.locator('#previewCanvas').evaluate(c => c.toDataURL()); assert.notEqual(variant, stable);
+    await page.locator('#undoFoil').click(); assert.equal(await page.evaluate(() => state.foilEffects[0].seed), parameters.seed);
+    await page.locator('#redoFoil').click(); assert.equal(await page.evaluate(() => state.foilEffects[0].seed), varied);
+    const sheet = await page.evaluate(() => {
+      const canvas = document.createElement('canvas'); canvas.width = 1080; canvas.height = 740; const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#101725'; ctx.fillRect(0,0,1080,740);
+      FoilEngine.templates.filter(t => t.particle).forEach((t,i) => {
+        const x = (i % 3) * 360, y = Math.floor(i / 3) * 370;
+        ctx.save(); ctx.translate(x + 180,y + 170); ctx.scale(325,325); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        t.draw(ctx,{ sizeMm:24, lineMm:0.3, color:t.color, count:100, particleMm:0.6, spread:90, glow:85, seed:12345 }); ctx.restore();
+        ctx.font = '18px sans-serif'; ctx.fillStyle = '#e0e5f0'; ctx.textAlign = 'center'; ctx.fillText(t.name,x + 180,y + 338);
+      }); return canvas.toDataURL('image/png').split(',')[1];
+    });
+    await fs.writeFile(path.join(artifacts,'particulas-galeria.png'), Buffer.from(sheet,'base64'));
+    await page.locator('[data-bg="dark"]').click(); await page.locator('#previewCanvas').screenshot({ path: path.join(artifacts,'particulas-mago.png') });
     assert.deepEqual(errors, []);
-    console.log('Foil passed: six ready motifs, real placement/drag/style controls, aligned four-PNG ZIP/CRCs/DPI, exact foil-free original + mirror, black/color foil layer, composite preview/export, transparent margins, history, duplication/removal, base/DPI tracking, mobile layout and image reset.');
+    console.log('Foil passed: six particle presets + six symbols, real placement/drag/style controls, aligned four-PNG ZIP/CRCs/DPI, exact foil-free original + mirror, black/color foil layer, composite preview/export, stable particle seeds, density/spread/size/glow controls, variation/undo/redo, transparent margins, base/DPI tracking, mobile layout and image reset.');
   } finally { await browser.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

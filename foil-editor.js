@@ -2,7 +2,8 @@
 window.TotemFoil = (() => {
   let app, selected = '', pending = '', drag = null, nextId = 1;
   let history = [[]], historyIndex = 0, cached = null, lastResult = null, lastRevision = -1;
-  const styleIds = ['foilSize', 'foilRotation', 'foilLine', 'foilColor'];
+  const particleIds = ['foilCount', 'foilSpread', 'foilParticleSize', 'foilGlow'];
+  const styleIds = ['foilSize', 'foilRotation', 'foilLine', 'foilColor', ...particleIds];
   function active() { return Boolean(pending || drag || (selected && ['foil', 'composite'].includes(app?.state.view))); }
   function ready() { return Boolean(app?.state.result) && app.$('processing').hidden && !app.state.exporting; }
   function frame(result) {
@@ -29,7 +30,8 @@ window.TotemFoil = (() => {
   }
   function syncStyle() {
     const effect = current(); if (!effect) return;
-    for (const [id, value] of Object.entries({ foilSize: effect.sizeMm, foilRotation: effect.rotation, foilLine: effect.lineMm, foilColor: effect.color })) app.$(id).value = value;
+    const p = FoilEngine.particleOptions(effect);
+    for (const [id, value] of Object.entries({ foilSize: effect.sizeMm, foilRotation: effect.rotation, foilLine: effect.lineMm, foilColor: effect.color, foilCount: p.count, foilSpread: p.spread, foilParticleSize: p.particleMm, foilGlow: p.glow })) app.$(id).value = value;
   }
   function update() {
     if (!app) return;
@@ -47,6 +49,13 @@ window.TotemFoil = (() => {
     $('duplicateFoil').disabled = !enabled || !effect || state.foilEffects.length >= 40;
     $('removeFoil').disabled = !enabled || !effect; $('clearFoil').disabled = !enabled || !state.foilEffects.length;
     $('undoFoil').disabled = !enabled || historyIndex === 0; $('redoFoil').disabled = !enabled || historyIndex === history.length - 1;
+    const particle = FoilEngine.templates.find(template => template.id === (pending || effect?.type))?.particle;
+    $('foilParticleSettings').hidden = !particle;
+    $('varyFoil').disabled = !enabled || !effect || !FoilEngine.templates.find(template => template.id === effect.type)?.particle || Boolean(drag);
+    $('foilCountValue').value = $('foilCount').value;
+    $('foilSpreadValue').value = $('foilSpread').value + '%';
+    $('foilParticleSizeValue').value = (+$('foilParticleSize').value).toLocaleString('pt-BR') + ' mm';
+    $('foilGlowValue').value = $('foilGlow').value + '%';
     $('foilSizeValue').value = (+$('foilSize').value).toLocaleString('pt-BR') + ' mm';
     $('foilRotationValue').value = $('foilRotation').value + '°';
     $('foilLineValue').value = (+$('foilLine').value).toLocaleString('pt-BR') + ' mm';
@@ -71,7 +80,7 @@ window.TotemFoil = (() => {
   }
   function defaults() {
     const { $ } = app;
-    return { sizeMm: +$('foilSize').value, rotation: +$('foilRotation').value, lineMm: +$('foilLine').value, color: $('foilColor').value };
+    return { sizeMm: +$('foilSize').value, rotation: +$('foilRotation').value, lineMm: +$('foilLine').value, color: $('foilColor').value, count: +$('foilCount').value, spread: +$('foilSpread').value, particleMm: +$('foilParticleSize').value, glow: +$('foilGlow').value };
   }
   function point(event, frozen = null) {
     const canvas = app.$('previewCanvas'), rect = frozen?.rect ?? canvas.getBoundingClientRect(), f = frozen?.frame ?? frame(app.state.result);
@@ -86,7 +95,7 @@ window.TotemFoil = (() => {
     if (pending) {
       event.preventDefault();
       if (app.state.foilEffects.length >= 40) return;
-      const effect = { id: `foil-${nextId++}`, type: pending, x: location.x, y: location.y, ...defaults() };
+      const effect = { id: `foil-${nextId++}`, type: pending, x: location.x, y: location.y, seed: Math.floor(Math.random() * 4294967296), ...defaults() };
       FoilEngine.validate([effect]); selected = effect.id; pending = '';
       app.state.foilEffects = [...app.state.foilEffects, effect];
       changed('Efeito adicionado. Arraste para mover ou ajuste tamanho e rotação. O download inclui os 4 PNGs.', true); return;
@@ -158,14 +167,21 @@ window.TotemFoil = (() => {
   }
   function init(context) {
     app = context; const { $, state } = app;
+    const groups = {};
+    for (const [key, title] of [['particles', 'Partículas de jogos'], ['symbols', 'Símbolos e traços']]) {
+      const heading = document.createElement('h3'); heading.className = 'foil-group-title'; heading.textContent = title;
+      const grid = document.createElement('div'); grid.className = 'foil-palette'; $('foilPalette').append(heading, grid); groups[key] = grid;
+    }
     for (const template of FoilEngine.templates) {
       const button = document.createElement('button'); button.type = 'button'; button.dataset.foilTemplate = template.id; button.setAttribute('aria-pressed', 'false');
       const thumbnail = document.createElement('canvas'); thumbnail.width = 60; thumbnail.height = 60; thumbnail.setAttribute('aria-hidden', 'true');
-      const ctx = thumbnail.getContext('2d'); ctx.translate(30, 30); ctx.scale(50, 50); ctx.strokeStyle = '#a77b25'; ctx.fillStyle = ctx.strokeStyle; ctx.lineWidth = 0.027; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; template.draw(ctx);
-      const name = document.createElement('span'); name.textContent = template.name; button.append(thumbnail, name); $('foilPalette').append(button);
+      const ctx = thumbnail.getContext('2d'); ctx.translate(30, 30); ctx.scale(55, 55); ctx.strokeStyle = '#a77b25'; ctx.fillStyle = ctx.strokeStyle; ctx.lineWidth = 0.027; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; template.draw(ctx);
+      button.classList.toggle('particle-template', Boolean(template.particle));
+      const name = document.createElement('span'); name.textContent = template.name; button.append(thumbnail, name); groups[template.particle ? 'particles' : 'symbols'].append(button);
       button.addEventListener('click', () => {
         if (!ready()) return;
         TotemEditor.deactivate(); deactivate(); selected = ''; pending = template.id;
+        if (template.particle) { $('foilColor').value = template.color; if (+$('foilSize').value < 24) $('foilSize').value = 24; }
         $('foilNote').textContent = `${template.name}: clique no local desejado na arte. Esc cancela a colocação.`;
         app.setView('composite'); $('previewCanvas').scrollIntoView({ block: 'center' });
       });
@@ -173,6 +189,11 @@ window.TotemFoil = (() => {
     for (const id of styleIds) { $(id).addEventListener('input', () => styleChanged()); $(id).addEventListener('change', () => styleChanged(true)); }
     for (const button of document.querySelectorAll('[data-foil-color]')) button.addEventListener('click', () => { $('foilColor').value = button.dataset.foilColor; styleChanged(true); });
     $('foilExportColor').addEventListener('change', () => changed());
+    $('varyFoil').addEventListener('click', () => {
+      const effect = current(); if (!effect || !ready() || drag) return;
+      app.state.foilEffects = app.state.foilEffects.map(item => item.id === selected ? { ...item, seed: (item.seed ?? FoilEngine.particleOptions(item).seed) + 2654435761 >>> 0 } : item);
+      changed('Nova distribuição de partículas. A posição e os ajustes foram mantidos.', true);
+    });
     $('foilSelect').addEventListener('change', () => { const id = $('foilSelect').value; TotemEditor.deactivate(); deactivate(); selected = id; syncStyle(); app.setView('composite'); });
     $('removeFoil').addEventListener('click', () => { state.foilEffects = state.foilEffects.filter(effect => effect.id !== selected); selected = ''; changed('Efeito removido.', true); });
     $('clearFoil').addEventListener('click', () => { deactivate(); state.foilEffects = []; selected = ''; changed('Foil removido da arte. Você pode desfazer esta ação.', true); });
