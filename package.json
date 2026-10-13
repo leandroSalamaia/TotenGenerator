@@ -1,0 +1,14 @@
+{
+  "name": "totem-studio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Preparação local de PNGs transparentes com recorte suave e contorno para Cricut",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/processing.test.cjs",
+    "test:browser": "node tests/browser.cjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.0"
+  }
+}
