@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const state = { source: null, result: null, view: 'result', worker: null, revision: 0, loadRevision: 0, debounce: null, name: 'totem', originalSize: null, edits: [] };
+const state = { source: null, result: null, view: 'result', worker: null, revision: 0, loadRevision: 0, debounce: null, name: 'totem', originalSize: null, edits: [], foilEffects: [], foilRevision: 0, mirrorBeforeFoil: null, exporting: false };
 const gradientControlIds = ['gradientDepth', 'gradientStrength', 'gradientLight', 'gradientCurve'];
 const controlIds = ['backgroundMode', 'tolerance', 'smoothing', 'border', 'joinBorders', 'gradient', ...gradientControlIds, 'cleanNoise', 'removeInternal', 'minInternal', 'baseEnabled', 'baseShape', 'baseWidth', 'baseHeight', 'baseColor', 'height', 'dpi'];
 function message(text, error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); }
@@ -46,6 +46,7 @@ function updateLabels() {
 }
 function stopWorker() { if (state.worker) { state.worker.terminate(); state.worker = null; } }
 function queueProcess() {
+  TotemFoil.deactivate();
   updateLabels();
   if (!state.source) return;
   state.revision++;
@@ -53,6 +54,7 @@ function queueProcess() {
   clearTimeout(state.debounce);
   $('exportButton').disabled = true;
   $('processing').hidden = false;
+  TotemEditor.update(); TotemFoil.update();
   state.debounce = setTimeout(runProcessing, 180);
 }
 function runProcessing() {
@@ -109,17 +111,29 @@ function completed(result, config) {
   message(notes.join(' ')); renderPreview();
 }
 function renderPreview() {
-  TotemEditor.update();
+  TotemEditor.update(); TotemFoil.update();
   const canvas = $('previewCanvas'), context = canvas.getContext('2d');
   const image = state.view === 'original' ? state.source : state.result;
-  if (!image) { canvas.hidden = true; $('viewBadge').hidden = true; $('emptyState').hidden = Boolean(state.source); return; }
-  canvas.width = image.width; canvas.height = image.height;
-  const rgba = state.view === 'original' ? image.data : state.view === 'cut' ? image.silhouette : image.rgba;
-  context.putImageData(new ImageData(rgba, image.width, image.height), 0, 0);
+  if (!image) { canvas.hidden = true; $('foilOverlayCanvas').hidden = true; $('viewBadge').hidden = true; $('emptyState').hidden = Boolean(state.source); return; }
+  let frame = state.result ? { width: state.result.width, height: state.result.height, offsetX: 0, offsetY: 0 } : null;
+  try { if (state.result) frame = TotemFoil.frame(state.result); }
+  catch (error) { $('exportButton').disabled = true; message(error.message, true); }
+  if (state.view === 'original') {
+    canvas.width = image.width; canvas.height = image.height; context.putImageData(new ImageData(image.data, image.width, image.height), 0, 0);
+  } else {
+    canvas.width = frame.width; canvas.height = frame.height;
+    if (state.view !== 'foil') context.putImageData(new ImageData(state.view === 'cut' ? image.silhouette : image.rgba, image.width, image.height), frame.offsetX, frame.offsetY);
+    if (['foil', 'composite'].includes(state.view)) TotemFoil.draw(context, frame, state.view === 'foil');
+  }
   TotemEditor.drawOverlay(canvas);
   canvas.hidden = false; $('emptyState').hidden = true;
   $('viewBadge').hidden = false;
-  $('viewBadge').textContent = state.view === 'original' ? 'IMAGEM ORIGINAL' : state.view === 'cut' ? 'CONFIRA AS PARTES DO RECORTE' : 'FUNDO TRANSPARENTE';
+  $('viewBadge').textContent = state.view === 'original' ? 'IMAGEM ORIGINAL' : state.view === 'cut' ? 'CONFIRA AS PARTES DO RECORTE' : state.view === 'foil' ? 'CAMADA FOIL ISOLADA' : state.view === 'composite' ? 'ARTE COM FOIL' : 'ARTE SEM FOIL';
+  if (state.result) {
+    $('imageInfo').textContent = `${frame.width} × ${frame.height} px · ${state.result.dpi} dpi`;
+    $('exportInfo').textContent = `${(frame.width / state.result.dpi * 2.54).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} × ${(frame.height / state.result.dpi * 2.54).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} cm · PNG transparente`;
+  }
+  TotemFoil.drawSelection(canvas);
 }
 async function loadImage(file, demo = false) {
   if (!file) return;
@@ -139,6 +153,7 @@ async function loadImage(file, demo = false) {
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     state.source = context.getImageData(0, 0, canvas.width, canvas.height);
     TotemEditor.reset();
+    TotemFoil.reset();
     state.originalSize = { width: image.naturalWidth, height: image.naturalHeight };
     state.name = demo ? 'raposa-exemplo' : file.name.replace(/\.[^.]+$/, '').replace(/[^\p{L}\p{N}_ -]/gu, '').slice(0, 80) || 'totem';
     state.result = null;
@@ -150,8 +165,9 @@ async function loadImage(file, demo = false) {
   } finally { URL.revokeObjectURL(url); $('fileInput').value = ''; }
 }
 function setView(view) {
+  if (['foil', 'composite'].includes(view)) TotemEditor.deactivate(); else TotemFoil.deactivate();
   state.view = view;
-  for (const [id, value] of [['resultTab', 'result'], ['originalTab', 'original'], ['cutTab', 'cut']]) { $(id).classList.toggle('active', value === view); $(id).setAttribute('aria-pressed', String(value === view)); }
+  for (const [id, value] of [['resultTab', 'result'], ['originalTab', 'original'], ['cutTab', 'cut'], ['compositeTab', 'composite'], ['foilTab', 'foil']]) { $(id).classList.toggle('active', value === view); $(id).setAttribute('aria-pressed', String(value === view)); }
   renderPreview();
 }
 function crc32(bytes) {
@@ -210,19 +226,34 @@ function downloadBlob(blob, name) {
   link.href = url; link.download = name; document.body.append(link); link.click(); link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
-function updateExportMode() {
-  $('exportButtonLabel').textContent = $('includeMirror').checked ? 'Baixar 2 PNGs' : 'Baixar PNG';
-  $('exportBundleNote').hidden = !$('includeMirror').checked;
+function updateExportMode(preferenceChanged = false) {
+  const hasFoil = state.foilEffects.length > 0;
+  if (hasFoil) {
+    if (state.mirrorBeforeFoil === null || preferenceChanged) state.mirrorBeforeFoil = $('includeMirror').checked;
+    $('includeMirror').checked = true;
+  } else if (state.mirrorBeforeFoil !== null) { $('includeMirror').checked = state.mirrorBeforeFoil; state.mirrorBeforeFoil = null; }
+  $('includeMirror').disabled = hasFoil;
+  $('exportButtonLabel').textContent = hasFoil ? 'Baixar 4 PNGs' : $('includeMirror').checked ? 'Baixar 2 PNGs' : 'Baixar PNG';
+  $('exportBundleNote').textContent = hasFoil ? 'Arte + espelho sem foil + foil isolado + arte com foil · 4 PNGs alinhados' : 'Original + espelho horizontal · 2 PNGs em um ZIP';
+  $('exportBundleNote').hidden = !hasFoil && !$('includeMirror').checked;
 }
 async function exportPng() {
   const result = state.result;
   if (!result || $('exportButton').disabled) return;
   const revision = state.revision, name = state.name, includeMirror = $('includeMirror').checked;
+  state.exporting = true; TotemEditor.update(); TotemFoil.update();
   $('exportButton').disabled = true;
   try {
-    const canvas = document.createElement('canvas'); canvas.width = result.width; canvas.height = result.height;
-    canvas.getContext('2d').putImageData(new ImageData(result.rgba, result.width, result.height), 0, 0);
-    if (includeMirror) {
+    if (state.foilEffects.length) {
+      const layers = TotemFoil.layers(result);
+      const names = [`${name}-totem.png`, `${name}-totem-espelhado.png`, `${name}-foil.png`, `${name}-totem-com-foil.png`];
+      const canvases = [layers.normal, layers.mirror, layers.foil, layers.composite];
+      const files = await Promise.all(canvases.map(async (canvas, index) => ({ name: names[index], blob: await canvasPng(canvas, result.dpi) })));
+      downloadBlob(await zipPngs(files), `${name}-totem-e-foil-4-pngs.zip`);
+      message('ZIP exportado com 4 PNGs alinhados: arte e espelho sem foil, foil isolado e arte com foil.');
+    } else if (includeMirror) {
+      const canvas = document.createElement('canvas'); canvas.width = result.width; canvas.height = result.height;
+      canvas.getContext('2d').putImageData(new ImageData(result.rgba, result.width, result.height), 0, 0);
       const mirror = document.createElement('canvas'); mirror.width = result.width; mirror.height = result.height;
       const context = mirror.getContext('2d'); context.translate(result.width, 0); context.scale(-1, 1); context.drawImage(canvas, 0, 0);
       const [originalPng, mirrorPng] = await Promise.all([canvasPng(canvas, result.dpi), canvasPng(mirror, result.dpi)]);
@@ -230,11 +261,13 @@ async function exportPng() {
       downloadBlob(zip, `${name}-totem-original-e-espelho.zip`);
       message('ZIP exportado com 2 PNGs: original e espelhado horizontalmente. Extraia as imagens para importar no Design Space.');
     } else {
+      const canvas = document.createElement('canvas'); canvas.width = result.width; canvas.height = result.height;
+      canvas.getContext('2d').putImageData(new ImageData(result.rgba, result.width, result.height), 0, 0);
       downloadBlob(await canvasPng(canvas, result.dpi), `${name}-totem.png`);
       message('PNG exportado. No Design Space, confira o tamanho e a silhueta antes de imprimir e cortar.');
     }
   } catch (error) { message(error.message, true); }
-  finally { if (revision === state.revision && state.result) $('exportButton').disabled = false; }
+  finally { state.exporting = false; if (revision === state.revision && state.result) $('exportButton').disabled = false; TotemEditor.update(); TotemFoil.update(); }
 }
 function sampleImage() {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1200" viewBox="0 0 1000 1200"><rect width="1000" height="1200" fill="white"/><g stroke="#523726" stroke-width="8" stroke-linejoin="round"><path d="M604 728C913 647 951 879 798 989C747 1026 650 1035 558 954" fill="#d97934"/><path d="M880 759C914 838 877 936 798 989C759 1011 718 1019 680 1019C764 950 812 867 800 771" fill="#fff3dc"/><path d="M345 709C322 786 276 911 306 1010C360 1061 652 1061 695 1004C714 915 661 785 630 708Z" fill="#dc8239"/><path d="M462 749C406 823 408 974 450 1022H585C615 932 604 818 550 749" fill="#fff3dc"/><path d="M333 843 310 1005C319 1054 390 1056 409 1013L415 900M626 851 674 1005C665 1054 596 1056 577 1013L566 903" fill="#dc8239"/><path d="M253 478 244 164Q246 122 283 150L421 307M745 478 762 164Q760 122 723 150L580 307" fill="#d97934"/><path d="m279 386-6-187 113 149M716 386l18-187-121 149" fill="#f2b681"/><path d="M231 473C259 329 363 287 500 293C642 288 745 339 771 473L805 564C724 630 689 717 586 758C534 790 467 790 416 758C313 717 277 630 194 564Z" fill="#e5893d"/><path d="M199 557C275 527 353 559 441 649L499 706L559 648C646 559 726 527 799 557C721 635 690 716 586 758C534 790 467 790 416 758C313 717 277 630 199 557Z" fill="#fff3dc"/><path d="M449 648Q500 626 551 648Q531 685 500 688Q469 685 449 648Z" fill="#523726"/><path d="M500 689v28m-39 5q39 37 78 0" fill="none" stroke-linecap="round"/><path d="M331 520q34-43 67 0m205 0q34-43 67 0" fill="none" stroke-width="13" stroke-linecap="round"/></g><ellipse cx="329" cy="569" rx="27" ry="15" fill="#d16c40" opacity=".45"/><ellipse cx="671" cy="569" rx="27" ry="15" fill="#d16c40" opacity=".45"/><path d="m455 327 45 62 44-62" fill="#f4b876"/><g fill="#648163"><path d="M388 762q58-49 113 9q-67 64-113-9M611 762q-58-49-113 9q67 64 113-9"/><circle cx="500" cy="775" r="20" fill="#3d644b"/></g></svg>`;
@@ -256,16 +289,17 @@ $('resetGradient').addEventListener('click', () => {
   queueProcess();
 });
 for (const id of controlIds) $(id).addEventListener('input', queueProcess);
-for (const [id, view] of [['resultTab', 'result'], ['originalTab', 'original'], ['cutTab', 'cut']]) $(id).addEventListener('click', () => setView(view));
+for (const [id, view] of [['resultTab', 'result'], ['originalTab', 'original'], ['cutTab', 'cut'], ['compositeTab', 'composite'], ['foilTab', 'foil']]) $(id).addEventListener('click', () => setView(view));
 for (const button of document.querySelectorAll('[data-bg]')) button.addEventListener('click', () => {
   $('canvasStage').classList.remove('checker', 'white', 'dark'); $('canvasStage').classList.add(button.dataset.bg);
   for (const item of document.querySelectorAll('[data-bg]')) { item.classList.toggle('active', item === button); item.setAttribute('aria-pressed', String(item === button)); }
 });
 $('exportButton').addEventListener('click', exportPng);
-$('includeMirror').addEventListener('change', updateExportMode);
+$('includeMirror').addEventListener('change', () => updateExportMode(true));
 $('helpButton').addEventListener('click', () => $('helpDialog').showModal());
 $('closeHelp').addEventListener('click', () => $('helpDialog').close());
 $('helpDialog').addEventListener('click', event => { if (event.target === $('helpDialog')) { const r = event.target.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) event.target.close(); } });
 TotemEditor.init({ state, $, queueProcess, renderPreview, setView, controlIds, updateExportMode });
+TotemFoil.init({ state, $, renderPreview, setView, updateExportMode, message });
 updateLabels();
 updateExportMode();

@@ -14,7 +14,7 @@ window.TotemEditor = (() => {
   function refresh() { if (frame === null) frame = requestAnimationFrame(() => { frame = null; app.renderPreview(); }); }
   function update() {
     if (!app) return;
-    const { $, state } = app, ready = Boolean(state.source) && $('processing').hidden;
+    const { $, state } = app, ready = Boolean(state.source) && $('processing').hidden && !state.exporting;
     $('editorControls').disabled = !ready;
     $('undoEdit').disabled = historyIndex === 0;
     $('redoEdit').disabled = historyIndex === history.length - 1;
@@ -34,6 +34,10 @@ window.TotemEditor = (() => {
     draft = null; pointerId = null; tool = 'none';
     app.state.edits = []; history = [[]]; historyIndex = 0;
     update();
+  }
+  function deactivate() {
+    if (draft) endStroke({ pointerId }, true);
+    tool = 'none'; update();
   }
   function remember(edits) {
     history = history.slice(0, historyIndex + 1);
@@ -57,6 +61,8 @@ window.TotemEditor = (() => {
     if (state.view !== 'original') {
       if (!state.result) return null;
       const { placement, sourceBounds: b } = state.result;
+      let frame; try { frame = TotemFoil.frame(state.result); } catch { return null; }
+      x -= frame.offsetX; y -= frame.offsetY;
       x = b.x + (x - placement.x + 0.5) / placement.width * b.width - 0.5;
       y = b.y + (y - placement.y + 0.5) / placement.height * b.height - 0.5;
     }
@@ -64,7 +70,7 @@ window.TotemEditor = (() => {
   }
   function startStroke(event) {
     const { $, state } = app;
-    if (tool === 'none' || !state.source || !$('processing').hidden || draft || event.button !== 0) return;
+    if (tool === 'none' || !state.source || !$('processing').hidden || state.exporting || ['foil', 'composite'].includes(state.view) || draft || event.button !== 0) return;
     if (state.edits.length >= 200) { $('editorHint').textContent = 'Limite de 200 traços atingido. Desfaça ou limpe as edições para continuar.'; return; }
     const point = sourcePoint(event);
     if (!point) return;
@@ -104,8 +110,9 @@ window.TotemEditor = (() => {
       const project = point => {
         if (state.view === 'original') return point;
         const { placement: p, sourceBounds: b } = state.result;
+        const frame = TotemFoil.frame(state.result);
         scale = Math.min(p.width / b.width, p.height / b.height);
-        return { x: p.x + (point.x - b.x + 0.5) * p.width / b.width - 0.5, y: p.y + (point.y - b.y + 0.5) * p.height / b.height - 0.5 };
+        return { x: frame.offsetX + p.x + (point.x - b.x + 0.5) * p.width / b.width - 0.5, y: frame.offsetY + p.y + (point.y - b.y + 0.5) * p.height / b.height - 0.5 };
       };
       const points = stroke.points.map(project);
       const sourceScale = state.result ? state.result.placement.height / state.result.sourceBounds.height : 1;
@@ -118,7 +125,7 @@ window.TotemEditor = (() => {
   }
   function presetIds() { return [...app.controlIds, 'includeMirror']; }
   function snapshot() {
-    return Object.fromEntries(presetIds().map(id => [id, app.$(id).type === 'checkbox' ? app.$(id).checked : app.$(id).value]));
+    return Object.fromEntries(presetIds().map(id => [id, id === 'includeMirror' && app.state.mirrorBeforeFoil !== null ? app.state.mirrorBeforeFoil : app.$(id).type === 'checkbox' ? app.$(id).checked : app.$(id).value]));
   }
   function validValues(values) {
     if (!values || typeof values !== 'object' || Array.isArray(values)) return false;
@@ -167,7 +174,7 @@ window.TotemEditor = (() => {
       const element = app.$(id);
       if (element.type === 'checkbox') element.checked = preset.values[id]; else element.value = preset.values[id];
     }
-    app.updateExportMode(); app.queueProcess();
+    app.updateExportMode(true); app.queueProcess();
     app.$('presetNote').textContent = `Preset “${preset.name}” aplicado. As edições da arte foram mantidas.`;
   }
   function init(context) {
@@ -192,6 +199,7 @@ window.TotemEditor = (() => {
       listPresets(); $('presetNote').textContent = `Preset “${preset.name}” excluído.`;
     });
     for (const button of document.querySelectorAll('[data-tool]')) button.addEventListener('click', () => {
+      TotemFoil.deactivate();
       draft = null; tool = button.dataset.tool; update();
       if (tool !== 'none' && state.source) app.setView('original'); else app.renderPreview();
     });
@@ -207,11 +215,11 @@ window.TotemEditor = (() => {
     canvas.addEventListener('lostpointercapture', event => endStroke(event, true));
     window.addEventListener('keydown', event => {
       if (event.key === 'Escape' && draft) { event.preventDefault(); endStroke({ pointerId }, true); return; }
-      if (!(event.ctrlKey || event.metaKey) || event.target.closest('input, select, textarea, [contenteditable="true"]') || !state.source || !$('processing').hidden || $('helpDialog').open) return;
+      if (!(event.ctrlKey || event.metaKey) || event.target.closest('input, select, textarea, [contenteditable="true"]') || !state.source || !$('processing').hidden || state.exporting || TotemFoil.active() || $('helpDialog').open) return;
       const key = event.key.toLowerCase();
       if (key === 'z' || key === 'y') { event.preventDefault(); moveHistory(key === 'y' || event.shiftKey ? 1 : -1); }
     });
     update();
   }
-  return { init, reset, update, drawOverlay };
+  return { init, reset, update, drawOverlay, deactivate };
 })();

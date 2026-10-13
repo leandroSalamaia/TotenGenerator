@@ -30,6 +30,23 @@ Guia oficial: [Como carregar imagens no Design Space](https://help.cricut.com/hc
 
 Pincel, pontes e base são aplicados ao resultado antes da exportação: o PNG e a cópia espelhada recebem todas as edições. Confira sempre a Silhueta de corte após editar.
 
+## Efeitos foil
+
+Em **Efeitos foil**, escolha **Brilho mágico**, **Estrelas**, **Raios de energia**, **Círculo arcano**, **Aura luminosa** ou **Espiral de magia**. Clique na arte para colocar o efeito, por exemplo na ponta do cajado de um mago. Arraste para mover; selecione um efeito na imagem ou na lista para editar. **Esc** cancela a colocação ou o movimento em andamento.
+
+Ajuste o tamanho entre **4 e 60 mm**, a rotação e a espessura do traço entre **0,1 e 1,5 mm**. Escolha ouro, prata, cobre ou uma cor personalizada. Há opções para duplicar, remover e limpar, com histórico próprio de desfazer/refazer. As abas **Arte + foil** e **Só foil** mostram a composição e a camada isolada. As marcações de seleção não são exportadas.
+
+Quando houver pelo menos um efeito, **Baixar 4 PNGs** entrega um ZIP com:
+
+1. `nome-totem.png`: arte processada, sem foil.
+2. `nome-totem-espelhado.png`: espelho horizontal da arte, sem foil.
+3. `nome-foil.png`: somente os efeitos sobre fundo transparente; por padrão em preto, com opção de usar as cores escolhidas na prévia.
+4. `nome-totem-com-foil.png`: arte com os efeitos nas cores escolhidas.
+
+Todos recebem as mesmas dimensões, resolução e posição da camada de arte; a cópia espelhada inverte o primeiro PNG inteiro. Quando um efeito ultrapassa a área original, os quatro arquivos ganham a mesma margem transparente para evitar cortes. Essa margem pode aumentar a altura final do arquivo acima do valor configurado, mantendo a escala da arte; confira as medidas indicadas junto ao download. A silhueta de corte mostra o recorte da arte, enquanto os efeitos ficam na camada de foil.
+
+Os efeitos mantêm a posição relativa à imagem ao trocar resolução, tamanho, base ou acabamento, e mantêm o tamanho físico escolhido em milímetros. São até **40 efeitos** e **100 passos de histórico**. Carregar outra imagem limpa o foil. Os efeitos não fazem parte dos presets de acabamento; aplicar um preset mantém os efeitos atuais. Sem foil, o download volta às opções de um PNG ou do par original/espelhado.
+
 ## Limites e acabamento
 
 - Arquivos de até 30 MB. Imagens acima de 80 megapixels são recusadas; a análise usa até 1800 pixels no maior lado para limitar o uso de memória. O tamanho de exportação é calculado separadamente.
@@ -45,4 +62,4 @@ Pincel, pontes e base são aplicados ao resultado antes da exportação: o PNG e
 
 Sem dependências de produção. `processing.js` usa flood fill para remover o fundo conectado, componentes para limpar pontos, fechamento morfológico e filtros para suavizar a máscara e distância euclidiana para calcular o contorno. O processamento acontece em um Web Worker; a interface permanece disponível.
 
-`npm test` executa testes do processamento. `npm install` instala a ferramenta de teste de navegador; `npm run test:browser` verifica upload, ajustes, exportação, transparência e os metadados do PNG no Chrome local. `npm run test:editor` verifica gestos reais do pincel e das pontes, histórico, base, persistência dos presets e exportação original/espelhada com as edições.
+`npm test` executa testes do processamento e da geometria do foil. `npm install` instala a ferramenta de teste de navegador; `npm run test:browser` verifica upload, ajustes, exportação, transparência e os metadados do PNG no Chrome local. `npm run test:editor` verifica gestos reais do pincel e das pontes, histórico, base, persistência dos presets e exportação original/espelhada com as edições. `npm run test:foil` verifica a galeria, colocação e movimento, ajustes, histórico, composição e o ZIP com os quatro PNGs, incluindo alinhamento, espelho, cores, transparência e resolução.

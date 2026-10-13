@@ -5,9 +5,10 @@
   "description": "Preparação local de PNGs transparentes com recorte suave e contorno para Cricut",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test tests/processing.test.cjs",
+    "test": "node --test tests/processing.test.cjs tests/foil.test.cjs",
     "test:browser": "node tests/browser.cjs",
-    "test:editor": "node tests/editor.cjs"
+    "test:editor": "node tests/editor.cjs",
+    "test:foil": "node tests/foil-browser.cjs"
   },
   "devDependencies": {
     "playwright": "^1.64.0"

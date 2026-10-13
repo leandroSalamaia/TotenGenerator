@@ -3,7 +3,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const root = __dirname;
-const files = new Set(['index.html', 'styles.css', 'app.js', 'processing.js', 'editor.js']);
+const files = new Set(['index.html', 'styles.css', 'app.js', 'processing.js', 'editor.js', 'foil.js', 'foil-editor.js']);
 function createServer() { return http.createServer((req, res) => {
   const name = (req.url || '/').split('?')[0].replace(/^\//, '') || 'index.html';
   if (!files.has(name)) { res.writeHead(404); res.end('Arquivo não encontrado'); return; }
