@@ -2,12 +2,20 @@
 const $ = id => document.getElementById(id);
 const state = { source: null, result: null, view: 'result', worker: null, revision: 0, loadRevision: 0, debounce: null, name: 'totem', originalSize: null };
 const gradientControlIds = ['gradientDepth', 'gradientStrength', 'gradientLight', 'gradientCurve'];
-const controlIds = ['tolerance', 'smoothing', 'border', 'joinBorders', 'gradient', ...gradientControlIds, 'cleanNoise', 'removeInternal', 'minInternal', 'height', 'dpi'];
+const controlIds = ['backgroundMode', 'tolerance', 'smoothing', 'border', 'joinBorders', 'gradient', ...gradientControlIds, 'cleanNoise', 'removeInternal', 'minInternal', 'height', 'dpi'];
 function message(text, error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); }
 function settings() {
-  return { tolerance: +$('tolerance').value, smoothing: +$('smoothing').value, borderMm: +$('border').value, joinBordersMm: +$('joinBorders').value, gradient: $('gradient').value, gradientDepth: +$('gradientDepth').value, gradientStrength: +$('gradientStrength').value, gradientLight: +$('gradientLight').value, gradientCurve: $('gradientCurve').value, cleanNoise: $('cleanNoise').checked, removeInternal: $('removeInternal').checked, minInternalMm: +$('minInternal').value, heightCm: +$('height').value, dpi: +$('dpi').value };
+  return { backgroundMode: $('backgroundMode').value, tolerance: +$('tolerance').value, smoothing: +$('smoothing').value, borderMm: +$('border').value, joinBordersMm: +$('joinBorders').value, gradient: $('gradient').value, gradientDepth: +$('gradientDepth').value, gradientStrength: +$('gradientStrength').value, gradientLight: +$('gradientLight').value, gradientCurve: $('gradientCurve').value, cleanNoise: $('cleanNoise').checked, removeInternal: $('removeInternal').checked, minInternalMm: +$('minInternal').value, heightCm: +$('height').value, dpi: +$('dpi').value };
 }
 function updateLabels() {
+  const requestedMode = $('backgroundMode').value;
+  const mode = state.source ? TotemEngine.resolveBackgroundMode(state.source.data, state.source.width, state.source.height, requestedMode) : requestedMode;
+  const preserveWhites = mode === 'alpha';
+  $('tolerance').disabled = preserveWhites;
+  $('removeInternalLabel').textContent = preserveWhites ? 'Recortar espaços transparentes internos' : 'Remover espaços brancos internos';
+  $('backgroundModeNote').textContent = preserveWhites
+    ? 'O recorte usa a transparência original. O branco da arte é preservado, inclusive nas bordas.'
+    : mode === 'white' ? 'O branco é tratado como fundo. Para preservar neve e outros detalhes, prefira uma imagem já transparente.' : 'Imagens com fundo transparente preservam o branco da arte.';
   $('toleranceValue').value = $('tolerance').value;
   $('smoothingValue').value = $('smoothing').value;
   $('borderValue').value = (+$('border').value).toLocaleString('pt-BR', { minimumFractionDigits: 1 }) + ' mm';
@@ -17,8 +25,8 @@ function updateLabels() {
   $('minInternal').disabled = !$('removeInternal').checked;
   const minimum = (+$('minInternal').value).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
   document.querySelector('.internal-space-setting .setting-note').textContent = $('removeInternal').checked
-    ? (+$('minInternal').value === 0 ? 'Remova todos os espaços brancos internos. O contorno pode fechar aberturas muito estreitas.' : `Abaixo de ${minimum} mm, preserve o espaço. O limite considera a abertura que sobra depois do contorno.`)
-    : 'Preserve os espaços brancos internos e mantenha os furos internos fechados no recorte.';
+    ? (+$('minInternal').value === 0 ? `Recorte todos os espaços ${preserveWhites ? 'transparentes' : 'brancos'} internos. O contorno pode fechar aberturas muito estreitas.` : `Abaixo de ${minimum} mm, preserve o espaço. O limite considera a abertura que sobra depois do contorno.`)
+    : preserveWhites ? 'Mantenha os furos transparentes internos fechados no recorte. As cores da arte são preservadas.' : 'Preserve os espaços brancos internos e mantenha os furos internos fechados no recorte.';
   const gradient = $('gradient').value;
   $('gradientDepthValue').value = $('gradientDepth').value + '%';
   $('gradientStrengthValue').value = $('gradientStrength').value + '%';
@@ -84,6 +92,7 @@ function completed(result, config) {
   $('imageInfo').textContent = `${result.width} × ${result.height} px · ${result.dpi} dpi`;
   $('exportInfo').textContent = `${wcm.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} × ${hcm.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} cm · PNG transparente`;
   const notes = [];
+  if (result.backgroundMode === 'alpha') notes.push('Transparência original usada no recorte; brancos da arte preservados.');
   if (state.originalSize.height < result.figurePixels) notes.push('A imagem foi ampliada. Uma original maior preserva mais detalhes na impressão.');
   if (result.removed) notes.push(`${result.removed} ${result.removed === 1 ? 'ponto solto removido' : 'pontos soltos removidos'}.`);
   if (result.joinedPixels) notes.push('Frestas pequenas fechadas no contorno final.');

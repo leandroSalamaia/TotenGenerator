@@ -14,11 +14,24 @@
     }
     return visited;
   }
-  function segment(rgba, width, height, tolerance) {
+  function resolveBackgroundMode(rgba, width, height, requested = 'auto') {
+    if (!['auto', 'white', 'alpha'].includes(requested)) throw new Error('Escolha uma origem válida para o recorte.');
+    if (requested !== 'auto') return requested;
+    // Only exterior transparency identifies a cutout. An isolated transparent
+    // hole in an otherwise opaque white background must not change the mode.
+    const transparent = new Uint8Array(width * height);
+    for (let i = 0; i < transparent.length; i++) transparent[i] = rgba[i * 4 + 3] <= 16 ? 1 : 0;
+    const exterior = floodExterior(transparent, width, height);
+    let count = 0;
+    for (const value of exterior) count += value;
+    return count >= Math.max(4, Math.ceil(transparent.length * 0.001)) ? 'alpha' : 'white';
+  }
+  function segment(rgba, width, height, tolerance, backgroundMode = 'auto') {
     const n = width * height, candidate = new Uint8Array(n);
+    const mode = resolveBackgroundMode(rgba, width, height, backgroundMode);
     for (let i = 0; i < n; i++) {
       const p = i * 4;
-      candidate[i] = rgba[p + 3] <= 16 || Math.min(rgba[p], rgba[p + 1], rgba[p + 2]) >= 255 - tolerance ? 1 : 0;
+      candidate[i] = rgba[p + 3] <= 16 || (mode === 'white' && Math.min(rgba[p], rgba[p + 1], rgba[p + 2]) >= 255 - tolerance) ? 1 : 0;
     }
     const exterior = floodExterior(candidate, width, height), mask = new Uint8Array(n);
     for (let i = 0; i < n; i++) mask[i] = !exterior[i] && rgba[i * 4 + 3] > 16 ? 1 : 0;
@@ -259,7 +272,8 @@
   function processImage(input) {
     const { rgba, width, height, settings } = input;
     if (!width || !height || rgba.length !== width * height * 4) throw new Error('Imagem inválida. Escolha outro arquivo.');
-    let mask = segment(rgba, width, height, settings.tolerance);
+    const backgroundMode = resolveBackgroundMode(rgba, width, height, settings.backgroundMode);
+    let mask = segment(rgba, width, height, settings.tolerance, backgroundMode);
     const cleanup = settings.cleanNoise ? removeSpecks(mask, width, height) : { removed: 0, kept: null };
     const bounds = maskBounds(mask, width, height);
     if (!bounds) throw new Error('Nenhuma figura encontrada. Diminua a remoção do branco ou desative a limpeza de pontos.');
@@ -277,7 +291,7 @@
       const candidate = new Uint8Array(resized.mask.length);
       for (let i = 0; i < candidate.length; i++) {
         const p = i * 4;
-        candidate[i] = !resized.mask[i] || resized.pixels[p + 3] <= 16 || Math.min(resized.pixels[p], resized.pixels[p + 1], resized.pixels[p + 2]) >= 255 - settings.tolerance ? 1 : 0;
+        candidate[i] = !resized.mask[i] || resized.pixels[p + 3] <= 16 || (backgroundMode === 'white' && Math.min(resized.pixels[p], resized.pixels[p + 1], resized.pixels[p + 2]) >= 255 - settings.tolerance) ? 1 : 0;
       }
       internalSpaces = filterInternalSpaces(resized.mask, candidate, outputWidth, outputHeight, minimumMm / 25.4 * dpi, borderPixels, settings.removeInternal, resized.pixels);
     }
@@ -296,12 +310,12 @@
       internalSpaces.opened = union.spaces.opened;
       internalSpaces.preserved += union.spaces.preserved;
     }
-    return { width: outputWidth, height: outputHeight, rgba: rendered.output, silhouette: rendered.silhouette, dpi, removed: cleanup.removed, sourceBounds: bounds, figurePixels: figureHeight, margin, internalSpaces, joinedPixels: union.addedPixels };
+    return { width: outputWidth, height: outputHeight, rgba: rendered.output, silhouette: rendered.silhouette, dpi, removed: cleanup.removed, sourceBounds: bounds, figurePixels: figureHeight, margin, internalSpaces, joinedPixels: union.addedPixels, backgroundMode };
   }
   function workerSource() {
-    return '"use strict";\n' + [floodExterior, segment, removeSpecks, fillInterior, filterInternalSpaces, maskBounds, distanceTo, boxBlur, smoothMask, resizeArtwork, gradientOptions, closeOutline, uniteRenderedBorders, gradientGray, renderArtwork, processImage].map(fn => fn.toString()).join('\n') + '\nself.onmessage = function(event) { const { id, input } = event.data; try { const result = processImage(input); self.postMessage({ id, result }, [result.rgba.buffer, result.silhouette.buffer]); } catch (error) { self.postMessage({ id, error: error.message }); } };';
+    return '"use strict";\n' + [floodExterior, resolveBackgroundMode, segment, removeSpecks, fillInterior, filterInternalSpaces, maskBounds, distanceTo, boxBlur, smoothMask, resizeArtwork, gradientOptions, closeOutline, uniteRenderedBorders, gradientGray, renderArtwork, processImage].map(fn => fn.toString()).join('\n') + '\nself.onmessage = function(event) { const { id, input } = event.data; try { const result = processImage(input); self.postMessage({ id, result }, [result.rgba.buffer, result.silhouette.buffer]); } catch (error) { self.postMessage({ id, error: error.message }); } };';
   }
-  const api = { processImage, workerSource, segment, distanceTo, smoothMask, fillInterior, maskBounds, removeSpecks, gradientOptions, gradientGray };
+  const api = { processImage, workerSource, segment, resolveBackgroundMode, distanceTo, smoothMask, fillInterior, maskBounds, removeSpecks, gradientOptions, gradientGray };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.TotemEngine = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

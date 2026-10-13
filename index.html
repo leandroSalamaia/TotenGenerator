@@ -31,12 +31,15 @@
         <fieldset id="controls" disabled>
           <section class="setting-section">
             <div class="section-title"><span class="number">02</span><h2>Prepare o recorte</h2></div>
+            <label class="field-label" for="backgroundMode">Origem do recorte</label>
+            <select id="backgroundMode"><option value="auto">Automático (recomendado)</option><option value="alpha">Transparência — preservar brancos</option><option value="white">Remover fundo branco</option></select>
+            <p class="setting-note" id="backgroundModeNote">Imagens com fundo transparente preservam o branco da arte.</p>
             <label class="range-label" for="tolerance">Remoção do branco <output id="toleranceValue">32</output></label>
             <input id="tolerance" type="range" min="0" max="110" value="32"><div class="range-hints"><span>Mais delicada</span><span>Mais intensa</span></div>
             <label class="range-label" for="smoothing">Suavização das bordas <output id="smoothingValue">3</output></label>
             <input id="smoothing" type="range" min="0" max="8" value="3"><div class="range-hints"><span>Mais detalhes</span><span>Mais suave</span></div>
             <label class="check-label"><input type="checkbox" id="cleanNoise" checked><span>Limpar pequenos pontos soltos</span></label>
-            <label class="check-label"><input type="checkbox" id="removeInternal" checked><span>Remover espaços brancos internos</span></label>
+            <label class="check-label"><input type="checkbox" id="removeInternal" checked><span id="removeInternalLabel">Recortar espaços internos</span></label>
             <div class="internal-space-setting">
               <label class="field-label" for="minInternal">Abertura mínima para recortar</label>
               <div class="input-unit"><input id="minInternal" type="number" min="0" max="20" step="0.1" value="2"><span>mm</span></div>
@@ -90,6 +93,6 @@
     </div>
     <footer><span>Seu desenho. Seu acabamento. Seu totem.</span><span>Preparado para <strong>Print Then Cut</strong> <span class="footer-star">✦</span></span></footer>
   </main>
-  <dialog id="helpDialog"><button id="closeHelp" class="dialog-close" aria-label="Fechar">×</button><div class="eyebrow">DO ARQUIVO AO PAPEL</div><h2>Seu totem, em quatro passos.</h2><ol><li><strong>Carregue a imagem.</strong> Prefira um desenho bem definido sobre fundo branco, com espaço ao redor da figura.</li><li><strong>Acerte o recorte.</strong> Ajuste a remoção do branco e a suavização. Confira a aba “Silhueta de corte”: cada parte separada pode virar um corte independente.</li><li><strong>Escolha o acabamento.</strong> O degradê padrão vai do cinza junto à figura ao preto na borda externa. A região fora do contorno fica transparente.</li><li><strong>Baixe o PNG.</strong> Importe no Cricut Design Space e escolha Print Then Cut (Imprimir e Cortar). Confira as dimensões e a prévia de corte antes de imprimir.</li></ol><p>O programa suaviza a silhueta; a qualidade final depende da imagem original e da calibração da máquina. Partes brancas abertas para o fundo podem precisar de uma remoção menos intensa.</p><a href="https://help.cricut.com/hc/en-us/articles/360009556313-How-to-upload-images-into-Design-Space" target="_blank" rel="noopener noreferrer">Guia oficial de importação da Cricut ↗</a></dialog>
+  <dialog id="helpDialog"><button id="closeHelp" class="dialog-close" aria-label="Fechar">×</button><div class="eyebrow">DO ARQUIVO AO PAPEL</div><h2>Seu totem, em quatro passos.</h2><ol><li><strong>Carregue a imagem.</strong> Prefira um desenho bem definido, com espaço ao redor da figura. Imagens já transparentes preservam melhor detalhes brancos como neve e roupas.</li><li><strong>Acerte o recorte.</strong> Em “Origem do recorte”, o modo Automático usa a transparência original quando disponível. Ajuste a suavização e confira a aba “Silhueta de corte”: cada parte separada pode virar um corte independente.</li><li><strong>Escolha o acabamento.</strong> O degradê padrão vai do cinza junto à figura ao preto na borda externa. A região fora do contorno fica transparente.</li><li><strong>Baixe o PNG.</strong> Importe no Cricut Design Space e escolha Print Then Cut (Imprimir e Cortar). Confira as dimensões e a prévia de corte antes de imprimir.</li></ol><p>No modo “Transparência — preservar brancos”, apenas espaços transparentes viram aberturas; branco opaco continua sendo arte. Em imagens com fundo branco opaco, o branco do fundo e o branco da arte podem se misturar. A qualidade final depende da imagem original e da calibração da máquina.</p><a href="https://help.cricut.com/hc/en-us/articles/360009556313-How-to-upload-images-into-Design-Space" target="_blank" rel="noopener noreferrer">Guia oficial de importação da Cricut ↗</a></dialog>
 </body>
 </html>

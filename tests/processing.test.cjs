@@ -7,6 +7,49 @@ function image(width = 40, height = 50) {
   return { rgba, width, height, rect };
 }
 const config = { tolerance: 32, smoothing: 0, borderMm: 2, gradient: 'outward', cleanNoise: true, fillHoles: true, heightCm: 4, dpi: 150 };
+
+function snowyArtwork() {
+  const src = image(200, 240);
+  src.rgba.fill(0);
+  src.rect(20, 20, 160, 200, [35, 65, 110, 255]);
+  src.rect(20, 175, 160, 45, [255, 255, 255, 255]); // Snow touches the transparent exterior.
+  src.rect(35, 35, 55, 55, [248, 248, 248, 255]); // White detail belongs to the artwork.
+  src.rect(110, 45, 50, 80, [0, 0, 0, 0]); // A real opening must remain eligible for cutting.
+  return src;
+}
+test('automatic segmentation respects transparent exterior and opaque white artwork', () => {
+  const src = snowyArtwork(), original = src.rgba.slice();
+  const mask = engine.segment(src.rgba, src.width, src.height, 110);
+  assert.equal(mask[200 * src.width + 25], 1);
+  assert.equal(mask[50 * src.width + 50], 1);
+  assert.equal(mask[70 * src.width + 130], 0);
+  assert.equal(mask[0], 0);
+  assert.deepEqual(src.rgba, original);
+});
+test('background mode can be overridden and only exterior transparency triggers automatic preservation', () => {
+  const src = snowyArtwork();
+  assert.equal(engine.resolveBackgroundMode(src.rgba, src.width, src.height), 'alpha');
+  assert.equal(engine.segment(src.rgba, src.width, src.height, 32, 'white')[200 * src.width + 25], 0);
+  const opaque = image(100, 100);
+  opaque.rect(20, 20, 60, 60, [30, 60, 90, 255]);
+  opaque.rect(40, 40, 20, 20, [0, 0, 0, 0]);
+  assert.equal(engine.resolveBackgroundMode(opaque.rgba, 100, 100), 'white');
+  assert.equal(engine.segment(opaque.rgba, 100, 100, 32)[0], 0);
+  assert.equal(engine.segment(opaque.rgba, 100, 100, 32, 'alpha')[0], 1);
+  assert.throws(() => engine.processImage({ ...src, settings: { ...config, backgroundMode: 'invalid' } }), /origem válida/);
+});
+test('white snow and enclosed white details survive internal filtering, gradients and final union', () => {
+  const src = snowyArtwork(), original = src.rgba.slice();
+  for (const gradient of ['outward', 'inward', 'solid']) {
+    const out = engine.processImage({ ...src, settings: { ...config, tolerance: 110, borderMm: 0.5, joinBordersMm: 2, removeInternal: true, minInternalMm: 2, gradient } });
+    assert.deepEqual(sourcePixel(out, 50, 200), [255, 255, 255, 255]);
+    assert.deepEqual(sourcePixel(out, 50, 50), [248, 248, 248, 255]);
+    assert.equal(sourcePixel(out, 130, 80)[3], 0);
+    assert.equal(out.rgba[3], 0);
+    for (let p = 3; p < out.rgba.length; p += 4) assert.equal(out.rgba[p], out.silhouette[p]);
+  }
+  assert.deepEqual(src.rgba, original);
+});
 test('removes only connected white background, preserving enclosed white artwork', () => {
   const src = image(); src.rect(8, 10, 24, 30, [30, 60, 100, 255]); src.rect(14, 16, 12, 18, [255, 255, 255, 255]);
   const mask = engine.segment(src.rgba, src.width, src.height, 32);

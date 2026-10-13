@@ -241,12 +241,60 @@ async function main() {
     assert.equal(await gapAlpha(), 0);
     await page.locator('#joinBorders').fill('2');
     await page.waitForFunction(() => !document.getElementById('exportButton').disabled);
+    // A transparent cutout with white snow touching its exterior must preserve
+    // that artwork while still cutting a genuinely transparent internal hole.
+    const snowSource = await page.evaluate(() => {
+      const canvas = document.createElement('canvas'); canvas.width = 200; canvas.height = 240;
+      const context = canvas.getContext('2d'); context.fillStyle = '#23416e'; context.fillRect(20, 20, 160, 200);
+      context.fillStyle = 'white'; context.fillRect(20, 175, 160, 45);
+      context.fillStyle = '#f8f8f8'; context.fillRect(35, 35, 55, 55);
+      context.clearRect(110, 45, 50, 80);
+      return canvas.toDataURL('image/png').split(',')[1];
+    });
+    await page.locator('#backgroundMode').selectOption('auto');
+    await page.locator('#gradient').selectOption('inward');
+    await page.locator('#fileInput').setInputFiles({ name: 'arte-com-neve.png', mimeType: 'image/png', buffer: Buffer.from(snowSource, 'base64') });
+    await page.waitForFunction(() => document.getElementById('uploadTitle').textContent === 'arte-com-neve.png' && !document.getElementById('exportButton').disabled);
+    assert.equal(await page.locator('#tolerance').isDisabled(), true);
+    assert.match(await page.locator('#backgroundModeNote').textContent(), /branco da arte é preservado/);
+    assert.match(await page.locator('#removeInternalLabel').textContent(), /transparentes/);
+    const snowPixels = () => page.locator('#previewCanvas').evaluate(canvas => {
+      const ctx = canvas.getContext('2d');
+      const at = (x, y) => [...ctx.getImageData(9 + Math.floor((x - 20 + 0.5) / 160 * (canvas.width - 18)), 9 + Math.floor((y - 20 + 0.5) / 200 * (canvas.height - 18)), 1, 1).data];
+      return { snow: at(50, 200), whiteDetail: at(50, 50), hole: at(130, 80)[3] };
+    });
+    assert.deepEqual(await snowPixels(), { snow: [255, 255, 255, 255], whiteDetail: [248, 248, 248, 255], hole: 0 });
+    await page.locator('#cutTab').click();
+    const snowyCut = await snowPixels(); assert.equal(snowyCut.snow[3], 255); assert.equal(snowyCut.whiteDetail[3], 255); assert.equal(snowyCut.hole, 0);
+    await page.locator('#resultTab').click();
+    const snowDownloadPromise = page.waitForEvent('download'); await page.locator('#exportButton').click();
+    const snowDownload = await snowDownloadPromise, snowPath = path.join(artifactDir, 'white-art-preserved.png');
+    await snowDownload.saveAs(snowPath);
+    const snowPng = await fs.readFile(snowPath);
+    const exportedSnow = await page.evaluate(async url => {
+      const image = new Image(); image.src = url; await image.decode();
+      const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+      const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+      const at = (x, y) => [...context.getImageData(9 + Math.floor((x - 20 + 0.5) / 160 * (canvas.width - 18)), 9 + Math.floor((y - 20 + 0.5) / 200 * (canvas.height - 18)), 1, 1).data];
+      return { snow: at(50, 200), whiteDetail: at(50, 50), hole: at(130, 80)[3], corner: context.getImageData(0, 0, 1, 1).data[3] };
+    }, `data:image/png;base64,${snowPng.toString('base64')}`);
+    assert.deepEqual(exportedSnow, { snow: [255, 255, 255, 255], whiteDetail: [248, 248, 248, 255], hole: 0, corner: 0 });
+    await page.locator('#backgroundMode').selectOption('white');
+    await page.waitForFunction(() => !document.getElementById('exportButton').disabled);
+    assert.equal(await page.locator('#tolerance').isDisabled(), false);
+    await page.locator('#backgroundMode').selectOption('alpha');
+    await page.waitForFunction(() => !document.getElementById('exportButton').disabled);
+    assert.equal(await page.locator('#tolerance').isDisabled(), true);
+    assert.deepEqual(await snowPixels(), { snow: [255, 255, 255, 255], whiteDetail: [248, 248, 248, 255], hole: 0 });
+    await page.locator('#backgroundMode').selectOption('auto');
+    await page.waitForFunction(() => !document.getElementById('exportButton').disabled);
+    await page.screenshot({ path: path.join(artifactDir, 'white-art-preserved.png-preview.png'), fullPage: true });
     await page.locator('#helpButton').click(); assert.equal(await page.locator('#helpDialog').isVisible(), true); await page.keyboard.press('Escape');
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({ path: path.join(artifactDir, 'mobile.png'), fullPage: true });
     assert.deepEqual(errors, []);
-    console.log(`Browser passed: finished border union in result/cut/export, union on/off, original PNG or ZIP with 2 pixel-exact mirrored PNGs, ZIP CRCs, dimensions/transparency/DPI, gradient controls, preview/export colors, no white fills, error recovery, mobile layout.`);
+    console.log(`Browser passed: opaque white artwork preserved in transparent inputs (preview/cut/export), background mode overrides, finished border union, original PNG or ZIP with mirrored PNGs, ZIP CRCs, dimensions/transparency/DPI, gradients, error recovery, mobile layout.`);
   } finally { await browser.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
